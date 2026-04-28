@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="55%" r="55%">
+      <stop offset="0%" style="stop-color:#1c1d44"/>
+      <stop offset="60%" style="stop-color:#0a0a22"/>
+      <stop offset="100%" style="stop-color:#04041a"/>
+    </radialGradient>
+    <radialGradient id="galaxyCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#fff5d4"/>
+      <stop offset="35%" style="stop-color:#ffd070"/>
+      <stop offset="70%" style="stop-color:#f08040" stop-opacity="0.6"/>
+      <stop offset="100%" style="stop-color:#f74c00" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tubeRust" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f74c00"/>
+      <stop offset="55%" style="stop-color:#b7410e"/>
+      <stop offset="100%" style="stop-color:#5d2807"/>
+    </linearGradient>
+    <linearGradient id="tubeShade" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff" stop-opacity="0.25"/>
+      <stop offset="40%" style="stop-color:#ffffff" stop-opacity="0"/>
+      <stop offset="100%" style="stop-color:#000000" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="ringRust" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f74c00"/>
+      <stop offset="100%" style="stop-color:#7a2c08"/>
+    </linearGradient>
+    <radialGradient id="spike" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="40%" style="stop-color:#ffe9a8"/>
+      <stop offset="100%" style="stop-color:#f74c00" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <style>
+    @keyframes twinkle { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+    @keyframes spin    { to { transform: rotate(360deg); } }
+    @keyframes pulse   { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+    .tw1 { animation: twinkle 2.4s ease-in-out infinite; }
+    .tw2 { animation: twinkle 2.4s ease-in-out 0.7s infinite; }
+    .tw3 { animation: twinkle 2.4s ease-in-out 1.4s infinite; }
+    .tw4 { animation: twinkle 2.4s ease-in-out 2.0s infinite; }
+    .tw5 { animation: twinkle 2.4s ease-in-out 0.4s infinite; }
+    .tw6 { animation: twinkle 2.4s ease-in-out 1.7s infinite; }
+    .galaxy  { transform-origin: 192px 70px; animation: spin 200s linear infinite; }
+    .gcore   { transform-origin: 192px 70px; animation: pulse 4s ease-in-out infinite; }
+    .raystar { transform-origin: 70px 60px; animation: spin 300s linear infinite; }
+  </style>
+
+  <!-- Night sky disc with rust ring -->
+  <circle cx="128" cy="128" r="120" fill="url(#sky)" stroke="url(#ringRust)" stroke-width="3"/>
+
+  <!-- Faint dust band suggesting Milky Way -->
+  <ellipse cx="128" cy="128" rx="118" ry="38" fill="#3a4060" opacity="0.06"
+           transform="rotate(-22 128 128)"/>
+  <ellipse cx="128" cy="128" rx="116" ry="22" fill="#5e6090" opacity="0.05"
+           transform="rotate(-22 128 128)"/>
+
+  <!-- Background stars -->
+  <circle class="tw1" cx="48"  cy="42"  r="1.6" fill="#ffffff"/>
+  <circle class="tw2" cx="220" cy="118" r="1.3" fill="#cfe8ff"/>
+  <circle class="tw3" cx="36"  cy="168" r="1.7" fill="#ffffff"/>
+  <circle class="tw4" cx="218" cy="200" r="1.2" fill="#ffe9a8"/>
+  <circle class="tw5" cx="100" cy="32"  r="1.0" fill="#ffffff"/>
+  <circle class="tw6" cx="156" cy="42"  r="1.1" fill="#cfe8ff"/>
+  <circle class="tw2" cx="38"  cy="100" r="0.9" fill="#ffffff"/>
+  <circle class="tw3" cx="222" cy="60"  r="1.0" fill="#ffffff"/>
+  <circle class="tw4" cx="58"  cy="218" r="0.9" fill="#cfe8ff"/>
+  <circle class="tw5" cx="178" cy="222" r="1.1" fill="#ffffff"/>
+  <circle class="tw6" cx="120" cy="222" r="0.8" fill="#ffe9a8"/>
+  <circle class="tw1" cx="232" cy="156" r="0.9" fill="#ffffff"/>
+
+  <!-- Bright reference star upper-left with diffraction spikes -->
+  <g class="raystar" opacity="0.9">
+    <circle cx="70" cy="60" r="9" fill="url(#spike)"/>
+    <line x1="70" y1="42"  x2="70" y2="78"  stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+    <line x1="52" y1="60"  x2="88" y2="60"  stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+  </g>
+
+  <!-- Galaxy in upper right (telescope's target) -->
+  <g class="galaxy">
+    <!-- Outer halo -->
+    <ellipse cx="192" cy="70" rx="36" ry="14" fill="#ffd070" opacity="0.10"/>
+    <ellipse cx="192" cy="70" rx="28" ry="10" fill="#ffe9a8" opacity="0.18"/>
+    <!-- Spiral arms (two opposing curves) -->
+    <path d="M 160 70 Q 178 50, 196 64 Q 214 78, 222 70"
+          fill="none" stroke="#ffe9a8" stroke-width="2.2" stroke-linecap="round" opacity="0.5"/>
+    <path d="M 224 70 Q 206 90, 188 76 Q 170 62, 162 70"
+          fill="none" stroke="#ffd070" stroke-width="2.2" stroke-linecap="round" opacity="0.5"/>
+    <!-- Inner ring -->
+    <ellipse cx="192" cy="70" rx="14" ry="5" fill="none" stroke="#fff5d4" stroke-width="1" opacity="0.5"/>
+  </g>
+  <g class="gcore">
+    <circle cx="192" cy="70" r="9" fill="url(#galaxyCore)"/>
+    <circle cx="192" cy="70" r="2.5" fill="#ffffff"/>
+  </g>
+
+  <!-- Telescope: classic Dobsonian silhouette aimed up-right at the galaxy -->
+  <g transform="rotate(-32 128 158)">
+    <!-- Rocker box / mount -->
+    <path d="M 92 196 L 164 196 L 158 224 L 98 224 Z"
+          fill="#3a1d0a" stroke="url(#ringRust)" stroke-width="1.5"/>
+    <!-- Side pivot -->
+    <circle cx="128" cy="196" r="6" fill="#1a0d05" stroke="url(#tubeRust)" stroke-width="1.2"/>
+    <!-- Main tube -->
+    <rect x="106" y="98" width="44" height="100" rx="6" ry="6"
+          fill="url(#tubeRust)"/>
+    <rect x="106" y="98" width="44" height="100" rx="6" ry="6"
+          fill="url(#tubeShade)"/>
+    <!-- Tube end caps -->
+    <ellipse cx="128" cy="98"  rx="22" ry="4" fill="#1a0d05"/>
+    <ellipse cx="128" cy="198" rx="22" ry="4" fill="#1a0d05"/>
+    <!-- Aperture rim ring -->
+    <ellipse cx="128" cy="98" rx="22" ry="4" fill="none" stroke="url(#ringRust)" stroke-width="1.2"/>
+    <!-- Eyepiece / focuser sticking out near the top -->
+    <rect x="148" y="118" width="22" height="10" rx="2" ry="2"
+          fill="#5d2807" stroke="url(#ringRust)" stroke-width="0.8"/>
+    <rect x="166" y="115" width="6" height="16" rx="1" ry="1" fill="#1a0d05"/>
+    <!-- Spider/secondary hint inside tube -->
+    <line x1="112" y1="108" x2="144" y2="108" stroke="#ffffff" stroke-width="0.6" opacity="0.3"/>
+    <line x1="128" y1="102" x2="128" y2="120" stroke="#ffffff" stroke-width="0.6" opacity="0.3"/>
+  </g>
+
+  <!-- Faint sight-line from eyepiece toward the galaxy -->
+  <line x1="166" y1="92" x2="186" y2="74"
+        stroke="#ffe9a8" stroke-width="1" stroke-dasharray="2 3"
+        opacity="0.35" stroke-linecap="round"/>
+</svg>

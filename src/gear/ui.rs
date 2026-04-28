@@ -1,0 +1,653 @@
+use super::data;
+use super::optics;
+
+use crust::{Crust, Input, Pane};
+use crust::style;
+use data::{Config, Eyepiece, Store, Telescope};
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Run the Gear (telescope/eyepiece) sub-mode. Takes over the alt
+/// screen, runs its own input loop, returns when the user presses
+/// `g` (flip back to Sky mode) or `q`/`Q` (quit astro entirely).
+/// Returns true if astro should exit; false if it should resume Sky.
+pub fn run() -> bool {
+    let cfg = Config::load();
+    let mut store = Store::load();
+
+    Crust::clear_screen();
+    let mut app = App::new(cfg, store.clone());
+    app.render_all();
+
+    let mut quit_astro = false;
+
+    loop {
+        let Some(key) = Input::getchr(Some(5)) else { continue };
+        match key.as_str() {
+            "g" | "G" => {
+                if app.cfg.auto_backup { data::backup(&app.store, app.cfg.backup_count); }
+                let _ = app.store.save();
+                break;
+            }
+            "q" => {
+                if app.cfg.auto_backup { data::backup(&app.store, app.cfg.backup_count); }
+                let _ = app.store.save();
+                quit_astro = true;
+                break;
+            }
+            "Q" => { quit_astro = true; break; }
+            "?" => app.show_help(),
+            "t" => { app.add_telescope(); app.render_all(); }
+            "e" => { app.add_eyepiece(); app.render_all(); }
+            "ENTER" => { app.edit_selected(); app.render_all(); }
+            "TAB" => { app.toggle_focus(); app.render_all(); }
+            "j" | "DOWN" => { app.move_down(); app.render_all(); }
+            "k" | "UP" => { app.move_up(); app.render_all(); }
+            "S-UP" => { app.shift_up(); app.render_all(); }
+            "S-DOWN" => { app.shift_down(); app.render_all(); }
+            "HOME" => { app.go_first(); app.render_all(); }
+            "END" => { app.go_last(); app.render_all(); }
+            " " | "SPACE" => { app.toggle_tag(); app.render_all(); }
+            "u" => { app.untag_all(); app.render_all(); }
+            "A" => { app.tag_all(); app.render_all(); }
+            "o" => { app.toggle_sort(); app.render_all(); }
+            "D" => { app.delete_selected(); app.render_all(); }
+            "C-O" => { app.create_observation_log(); }
+            "x" => { app.export_csv(); }
+            "X" => { app.export_json(); }
+            "r" => { app.render_all(); }
+            "v" => { app.show_version(); }
+            _ => {}
+        }
+        store = app.store.clone();
+        let _ = store.save();
+    }
+
+    Crust::clear_screen();
+    quit_astro
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Focus { Ts, Ep }
+
+struct App {
+    cfg: Config,
+    store: Store,
+    cols: u16,
+    rows: u16,
+    header: Pane,
+    ts_head: Pane,
+    ts: Pane,
+    ep_head: Pane,
+    ep: Pane,
+    footer: Pane,
+    focus: Focus,
+    ts_idx: usize,
+    ep_idx: usize,
+    ts_tagged: Vec<bool>,
+    ep_tagged: Vec<bool>,
+    sort_on: bool,
+    status: Option<(String, u8)>,
+}
+
+impl App {
+    fn new(cfg: Config, store: Store) -> Self {
+        let (cols, rows) = Crust::terminal_size();
+        let ts_tagged = vec![false; store.telescopes.len()];
+        let ep_tagged = vec![false; store.eyepieces.len()];
+        let panes = Self::build_panes(cols, rows, &cfg);
+        Self {
+            cfg, store, cols, rows,
+            header: panes.0, ts_head: panes.1, ts: panes.2,
+            ep_head: panes.3, ep: panes.4, footer: panes.5,
+            focus: Focus::Ts,
+            ts_idx: 0, ep_idx: 0, ts_tagged, ep_tagged,
+            sort_on: false,
+            status: None,
+        }
+    }
+
+    fn build_panes(cols: u16, rows: u16, cfg: &Config) -> (Pane, Pane, Pane, Pane, Pane, Pane) {
+        let half = rows / 2;
+        let ts_bg = hex_to_256(&cfg.ts_header_bg);
+        let ep_bg = hex_to_256(&cfg.ep_header_bg);
+
+        let mut header = Pane::new(1, 1, cols, 1, 255, 236);
+        header.wrap = false;
+        let mut ts_head = Pane::new(1, 2, cols, 1, 255, ts_bg);
+        ts_head.wrap = false;
+        let mut ts = Pane::new(1, 3, cols, half.saturating_sub(3), cfg.text_color, 0);
+        ts.wrap = false;
+        let mut ep_head = Pane::new(1, half, cols, 1, 255, ep_bg);
+        ep_head.wrap = false;
+        let mut ep = Pane::new(1, half + 1, cols, rows.saturating_sub(half + 1), cfg.text_color, 0);
+        ep.wrap = false;
+        let mut footer = Pane::new(1, rows, cols, 1, 255, 236);
+        footer.wrap = false;
+        (header, ts_head, ts, ep_head, ep, footer)
+    }
+
+    fn render_all(&mut self) {
+        self.render_header();
+        self.render_ts_head();
+        self.render_ts();
+        self.render_ep_head();
+        self.render_ep();
+        self.render_footer();
+    }
+
+    fn render_header(&mut self) {
+        let focus = if self.focus == Focus::Ts { "Telescopes" } else { "Eyepieces" };
+        let ts_tag = self.ts_tagged.iter().filter(|b| **b).count();
+        let ep_tag = self.ep_tagged.iter().filter(|b| **b).count();
+        let left = format!(" scope v{}   [{}]   TS tagged: {}   EP tagged: {}   sort: {}",
+            VERSION, focus, ts_tag, ep_tag, if self.sort_on { "on" } else { "off" });
+        self.header.say(&style::bold(&left));
+    }
+
+    fn render_ts_head(&mut self) {
+        let line = "  Telescope           APP     TFL   F/?   <MGN  xEYE    MINx     MAXx  SEP-R SEP-D    *FLD  GLXY  PLNT  DBL*  >2*<   MOON   SUN";
+        self.ts_head.say(&style::bold(line));
+    }
+
+    fn render_ts(&mut self) {
+        let ordered: Vec<usize> = self.ordered_ts_indices();
+        let mut lines = Vec::new();
+        for (vis_i, &i) in ordered.iter().enumerate() {
+            let t = &self.store.telescopes[i];
+            let tagged = *self.ts_tagged.get(i).unwrap_or(&false);
+            let (app, tfl) = (t.app, t.tfl);
+            let row = format!(
+                "{}{:<18}{:>7.0}{:>8.0}{:>6.1}{:>6.1}{:>6.0}{:>10}{:>9}{:>7.2}\"{:>6.2}\"{:>7.0}{:>6.0}{:>6.0}{:>6.0}{:>6.0}{:>7.0}{:>6.0}",
+                if tagged { style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8)) + " " } else { "  ".to_string() },
+                t.name,
+                app,
+                tfl,
+                optics::tfr(app, tfl),
+                optics::mlim(app),
+                optics::xeye(app),
+                format!("{:.0}({:.0}x)", optics::mine(app, tfl), optics::minx(app, tfl)),
+                format!("{:.0}({:.0}x)", optics::maxe(app, tfl), optics::maxx(app)),
+                optics::sepr(app),
+                optics::sepd(app),
+                optics::e_st(app, tfl),
+                optics::e_gx(app, tfl),
+                optics::e_pl(app, tfl),
+                optics::e_2s(app, tfl),
+                optics::e_t2(app, tfl),
+                optics::moon(tfl),
+                optics::sun(tfl),
+            );
+            let focused = self.focus == Focus::Ts && vis_i == self.ts_idx;
+            let line = if focused {
+                let marker = format!("\u{2192}{}", &row[1..]);
+                format!("\x1b[48;5;{}m{}\x1b[0m", self.cfg.cursor_bg, marker)
+            } else {
+                row
+            };
+            lines.push(line);
+        }
+        if lines.is_empty() {
+            lines.push(style::fg("  (no telescopes - press 't' to add)", 245));
+        }
+        self.ts.set_text(&lines.join("\n"));
+        self.ts.ix = scroll_offset(self.ts_idx, lines.len(), self.ts.h as usize);
+        self.ts.full_refresh();
+    }
+
+    fn render_ep_head(&mut self) {
+        let line = "  Eyepiece              FL  AFOV   MAGX  TFOV   PPL   2BLW";
+        self.ep_head.say(&style::bold(line));
+    }
+
+    fn render_ep(&mut self) {
+        // Use the currently-selected telescope for per-EP combination figures.
+        let ts = self.current_ts().cloned();
+        let ordered: Vec<usize> = self.ordered_ep_indices();
+        let mut lines = Vec::new();
+        for (vis_i, &i) in ordered.iter().enumerate() {
+            let e = &self.store.eyepieces[i];
+            let tagged = *self.ep_tagged.get(i).unwrap_or(&false);
+            let (magx, tfov, ppl) = match ts.as_ref() {
+                Some(t) => (
+                    optics::magx(t.tfl, e.fl),
+                    optics::tfov(t.tfl, e.fl, e.afov),
+                    optics::pupl(t.app, t.tfl, e.fl),
+                ),
+                None => (0.0, 0.0, 0.0),
+            };
+            let barlow = match ts.as_ref() {
+                Some(t) => format!("{:.0}x", 2.0 * optics::magx(t.tfl, e.fl)),
+                None => "-".into(),
+            };
+            let row = format!(
+                "{}{:<18}{:>7.1}{:>6.0}{:>7.0}{:>6.2}{:>6.1}{:>8}",
+                if tagged { style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8)) + " " } else { "  ".to_string() },
+                e.name, e.fl, e.afov,
+                magx, tfov, ppl, barlow,
+            );
+            let focused = self.focus == Focus::Ep && vis_i == self.ep_idx;
+            let line = if focused {
+                let marker = format!("\u{2192}{}", &row[1..]);
+                format!("\x1b[48;5;{}m{}\x1b[0m", self.cfg.cursor_bg, marker)
+            } else {
+                row
+            };
+            lines.push(line);
+        }
+        if lines.is_empty() {
+            lines.push(style::fg("  (no eyepieces - press 'e' to add)", 245));
+        }
+        self.ep.set_text(&lines.join("\n"));
+        self.ep.ix = scroll_offset(self.ep_idx, lines.len(), self.ep.h as usize);
+        self.ep.full_refresh();
+    }
+
+    fn render_footer(&mut self) {
+        if let Some((ref msg, color)) = self.status {
+            self.footer.say(&style::fg(msg, color));
+        } else {
+            let hint = " t:+TS  e:+EP  ENTER:Edit  TAB:Focus  SPACE:Tag  o:Sort  C-o:Log  x/X:Export  D:Del  r:Redraw  ?:Help  q:Quit";
+            self.footer.say(&style::fg(hint, 245));
+        }
+    }
+
+    fn status_say(&mut self, msg: &str, c: u8) {
+        self.status = Some((msg.to_string(), c));
+        self.render_footer();
+    }
+
+    // --- Selection / ordering ---
+
+    fn ordered_ts_indices(&self) -> Vec<usize> {
+        let mut idxs: Vec<usize> = (0..self.store.telescopes.len()).collect();
+        if self.sort_on {
+            idxs.sort_by(|&a, &b| self.store.telescopes[a].app.partial_cmp(&self.store.telescopes[b].app)
+                .unwrap_or(std::cmp::Ordering::Equal));
+        }
+        idxs
+    }
+    fn ordered_ep_indices(&self) -> Vec<usize> {
+        let mut idxs: Vec<usize> = (0..self.store.eyepieces.len()).collect();
+        if self.sort_on {
+            idxs.sort_by(|&a, &b| self.store.eyepieces[a].fl.partial_cmp(&self.store.eyepieces[b].fl)
+                .unwrap_or(std::cmp::Ordering::Equal));
+        }
+        idxs
+    }
+
+    /// Index (in the unsorted Vec) of the currently-selected telescope.
+    fn current_ts_orig_idx(&self) -> Option<usize> {
+        self.ordered_ts_indices().get(self.ts_idx).copied()
+    }
+    fn current_ep_orig_idx(&self) -> Option<usize> {
+        self.ordered_ep_indices().get(self.ep_idx).copied()
+    }
+    fn current_ts(&self) -> Option<&Telescope> {
+        self.current_ts_orig_idx().and_then(|i| self.store.telescopes.get(i))
+    }
+
+    fn toggle_focus(&mut self) {
+        self.focus = if self.focus == Focus::Ts { Focus::Ep } else { Focus::Ts };
+    }
+    fn move_down(&mut self) {
+        match self.focus {
+            Focus::Ts => {
+                if self.ts_idx + 1 < self.store.telescopes.len() { self.ts_idx += 1; }
+            }
+            Focus::Ep => {
+                if self.ep_idx + 1 < self.store.eyepieces.len() { self.ep_idx += 1; }
+            }
+        }
+    }
+    fn move_up(&mut self) {
+        match self.focus {
+            Focus::Ts => { if self.ts_idx > 0 { self.ts_idx -= 1; } }
+            Focus::Ep => { if self.ep_idx > 0 { self.ep_idx -= 1; } }
+        }
+    }
+    fn shift_up(&mut self) {
+        // Reorders the underlying Vec when sort is off.
+        if self.sort_on { return; }
+        match self.focus {
+            Focus::Ts => {
+                if self.ts_idx > 0 {
+                    self.store.telescopes.swap(self.ts_idx, self.ts_idx - 1);
+                    self.ts_tagged.swap(self.ts_idx, self.ts_idx - 1);
+                    self.ts_idx -= 1;
+                }
+            }
+            Focus::Ep => {
+                if self.ep_idx > 0 {
+                    self.store.eyepieces.swap(self.ep_idx, self.ep_idx - 1);
+                    self.ep_tagged.swap(self.ep_idx, self.ep_idx - 1);
+                    self.ep_idx -= 1;
+                }
+            }
+        }
+    }
+    fn shift_down(&mut self) {
+        if self.sort_on { return; }
+        match self.focus {
+            Focus::Ts => {
+                if self.ts_idx + 1 < self.store.telescopes.len() {
+                    self.store.telescopes.swap(self.ts_idx, self.ts_idx + 1);
+                    self.ts_tagged.swap(self.ts_idx, self.ts_idx + 1);
+                    self.ts_idx += 1;
+                }
+            }
+            Focus::Ep => {
+                if self.ep_idx + 1 < self.store.eyepieces.len() {
+                    self.store.eyepieces.swap(self.ep_idx, self.ep_idx + 1);
+                    self.ep_tagged.swap(self.ep_idx, self.ep_idx + 1);
+                    self.ep_idx += 1;
+                }
+            }
+        }
+    }
+    fn go_first(&mut self) {
+        match self.focus { Focus::Ts => self.ts_idx = 0, Focus::Ep => self.ep_idx = 0 }
+    }
+    fn go_last(&mut self) {
+        match self.focus {
+            Focus::Ts => self.ts_idx = self.store.telescopes.len().saturating_sub(1),
+            Focus::Ep => self.ep_idx = self.store.eyepieces.len().saturating_sub(1),
+        }
+    }
+    fn toggle_tag(&mut self) {
+        match self.focus {
+            Focus::Ts => {
+                if let Some(i) = self.current_ts_orig_idx() {
+                    if i < self.ts_tagged.len() { self.ts_tagged[i] = !self.ts_tagged[i]; }
+                }
+            }
+            Focus::Ep => {
+                if let Some(i) = self.current_ep_orig_idx() {
+                    if i < self.ep_tagged.len() { self.ep_tagged[i] = !self.ep_tagged[i]; }
+                }
+            }
+        }
+    }
+    fn tag_all(&mut self) {
+        match self.focus {
+            Focus::Ts => self.ts_tagged.iter_mut().for_each(|b| *b = true),
+            Focus::Ep => self.ep_tagged.iter_mut().for_each(|b| *b = true),
+        }
+    }
+    fn untag_all(&mut self) {
+        self.ts_tagged.iter_mut().for_each(|b| *b = false);
+        self.ep_tagged.iter_mut().for_each(|b| *b = false);
+    }
+    fn toggle_sort(&mut self) {
+        self.sort_on = !self.sort_on;
+    }
+
+    // --- Edit/add ---
+
+    fn add_telescope(&mut self) {
+        let input = self.footer.ask(" Telescope (name,app,fl[,notes]): ", "");
+        let parts: Vec<&str> = input.splitn(4, ',').map(|s| s.trim()).collect();
+        if parts.len() < 3 {
+            self.status_say(" Need: name,aperture,focal_length", 196);
+            return;
+        }
+        let name = parts[0].to_string();
+        if name.is_empty() { self.status_say(" Name required", 196); return; }
+        let app: f64 = match parts[1].parse() { Ok(v) if v > 0.0 => v, _ => { self.status_say(" Bad aperture", 196); return; } };
+        let tfl: f64 = match parts[2].parse() { Ok(v) if v > 0.0 => v, _ => { self.status_say(" Bad focal length", 196); return; } };
+        let notes = parts.get(3).unwrap_or(&"").to_string();
+        self.store.telescopes.push(Telescope { name, app, tfl, notes });
+        self.ts_tagged.push(false);
+        self.status_say(" Telescope added", 46);
+    }
+
+    fn add_eyepiece(&mut self) {
+        let input = self.footer.ask(" Eyepiece (name,fl,afov[,notes]): ", "");
+        let parts: Vec<&str> = input.splitn(4, ',').map(|s| s.trim()).collect();
+        if parts.len() < 3 {
+            self.status_say(" Need: name,focal_length,afov", 196);
+            return;
+        }
+        let name = parts[0].to_string();
+        if name.is_empty() { self.status_say(" Name required", 196); return; }
+        let fl: f64 = match parts[1].parse() { Ok(v) if v > 0.0 => v, _ => { self.status_say(" Bad focal length", 196); return; } };
+        let afov: f64 = match parts[2].parse() { Ok(v) if v > 0.0 => v, _ => { self.status_say(" Bad AFOV", 196); return; } };
+        let notes = parts.get(3).unwrap_or(&"").to_string();
+        self.store.eyepieces.push(Eyepiece { name, fl, afov, notes });
+        self.ep_tagged.push(false);
+        self.status_say(" Eyepiece added", 46);
+    }
+
+    fn edit_selected(&mut self) {
+        match self.focus {
+            Focus::Ts => {
+                let Some(i) = self.current_ts_orig_idx() else { return };
+                let t = self.store.telescopes[i].clone();
+                let initial = format!("{},{},{}{}",
+                    t.name, t.app, t.tfl,
+                    if t.notes.is_empty() { String::new() } else { format!(",{}", t.notes) });
+                let input = self.footer.ask(" Edit telescope (name,app,fl[,notes]): ", &initial);
+                let parts: Vec<&str> = input.splitn(4, ',').map(|s| s.trim()).collect();
+                if parts.len() < 3 { return; }
+                if let (Ok(a), Ok(f)) = (parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
+                    self.store.telescopes[i] = Telescope {
+                        name: parts[0].to_string(), app: a, tfl: f,
+                        notes: parts.get(3).unwrap_or(&"").to_string(),
+                    };
+                }
+            }
+            Focus::Ep => {
+                let Some(i) = self.current_ep_orig_idx() else { return };
+                let e = self.store.eyepieces[i].clone();
+                let initial = format!("{},{},{}{}",
+                    e.name, e.fl, e.afov,
+                    if e.notes.is_empty() { String::new() } else { format!(",{}", e.notes) });
+                let input = self.footer.ask(" Edit eyepiece (name,fl,afov[,notes]): ", &initial);
+                let parts: Vec<&str> = input.splitn(4, ',').map(|s| s.trim()).collect();
+                if parts.len() < 3 { return; }
+                if let (Ok(f), Ok(a)) = (parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
+                    self.store.eyepieces[i] = Eyepiece {
+                        name: parts[0].to_string(), fl: f, afov: a,
+                        notes: parts.get(3).unwrap_or(&"").to_string(),
+                    };
+                }
+            }
+        }
+    }
+
+    fn delete_selected(&mut self) {
+        let s = self.footer.ask(" Delete selected? (y/n): ", "");
+        if s.trim() != "y" && s.trim() != "Y" { return; }
+        match self.focus {
+            Focus::Ts => {
+                if let Some(i) = self.current_ts_orig_idx() {
+                    self.store.telescopes.remove(i);
+                    if i < self.ts_tagged.len() { self.ts_tagged.remove(i); }
+                    if self.ts_idx >= self.store.telescopes.len() {
+                        self.ts_idx = self.store.telescopes.len().saturating_sub(1);
+                    }
+                }
+            }
+            Focus::Ep => {
+                if let Some(i) = self.current_ep_orig_idx() {
+                    self.store.eyepieces.remove(i);
+                    if i < self.ep_tagged.len() { self.ep_tagged.remove(i); }
+                    if self.ep_idx >= self.store.eyepieces.len() {
+                        self.ep_idx = self.store.eyepieces.len().saturating_sub(1);
+                    }
+                }
+            }
+        }
+    }
+
+    fn export_csv(&mut self) {
+        let default = format!("{}/scope_export.csv", std::env::var("HOME").unwrap_or_default());
+        let path = self.footer.ask(" Export tagged to CSV (path): ", &default);
+        if path.trim().is_empty() { return; }
+        let mut out = String::from("type,name,aperture_mm,focal_length_mm,afov_deg,notes\n");
+        for (i, t) in self.store.telescopes.iter().enumerate() {
+            if *self.ts_tagged.get(i).unwrap_or(&false) {
+                out.push_str(&format!("telescope,{},{},{},,{}\n", csv_escape(&t.name), t.app, t.tfl, csv_escape(&t.notes)));
+            }
+        }
+        for (i, e) in self.store.eyepieces.iter().enumerate() {
+            if *self.ep_tagged.get(i).unwrap_or(&false) {
+                out.push_str(&format!("eyepiece,{},,{},{},{}\n", csv_escape(&e.name), e.fl, e.afov, csv_escape(&e.notes)));
+            }
+        }
+        match std::fs::write(path.trim(), out) {
+            Ok(_) => self.status_say(&format!(" Exported to {}", path.trim()), 46),
+            Err(e) => self.status_say(&format!(" Export failed: {}", e), 196),
+        }
+    }
+
+    fn export_json(&mut self) {
+        let default = format!("{}/scope_export.json", std::env::var("HOME").unwrap_or_default());
+        let path = self.footer.ask(" Export all to JSON (path): ", &default);
+        if path.trim().is_empty() { return; }
+        match serde_json::to_string_pretty(&self.store) {
+            Ok(s) => match std::fs::write(path.trim(), s) {
+                Ok(_) => self.status_say(&format!(" Exported to {}", path.trim()), 46),
+                Err(e) => self.status_say(&format!(" Export failed: {}", e), 196),
+            },
+            Err(e) => self.status_say(&format!(" Serialize failed: {}", e), 196),
+        }
+    }
+
+    fn create_observation_log(&mut self) {
+        let default = format!("{}/observation_{}.md", std::env::var("HOME").unwrap_or_default(),
+            chrono_date());
+        let path = self.footer.ask(" Observation log (path): ", &default);
+        if path.trim().is_empty() { return; }
+        let mut out = String::from("# Observation Log\n\n");
+        out.push_str(&format!("Date: {}\n\n", chrono_date()));
+        let tagged_ts: Vec<&Telescope> = self.store.telescopes.iter().enumerate()
+            .filter(|(i, _)| *self.ts_tagged.get(*i).unwrap_or(&false))
+            .map(|(_, t)| t).collect();
+        let tagged_ep: Vec<&Eyepiece> = self.store.eyepieces.iter().enumerate()
+            .filter(|(i, _)| *self.ep_tagged.get(*i).unwrap_or(&false))
+            .map(|(_, e)| e).collect();
+        if !tagged_ts.is_empty() {
+            out.push_str("## Telescope(s)\n\n");
+            for t in &tagged_ts {
+                out.push_str(&format!("- **{}** (APP {} mm, FL {} mm, f/{:.1})\n",
+                    t.name, t.app, t.tfl, optics::tfr(t.app, t.tfl)));
+                if !t.notes.is_empty() { out.push_str(&format!("  {}\n", t.notes)); }
+            }
+            out.push('\n');
+        }
+        if !tagged_ep.is_empty() {
+            out.push_str("## Eyepiece(s)\n\n");
+            for e in &tagged_ep {
+                out.push_str(&format!("- **{}** (FL {} mm, AFOV {}°)\n", e.name, e.fl, e.afov));
+                if !e.notes.is_empty() { out.push_str(&format!("  {}\n", e.notes)); }
+            }
+            out.push('\n');
+        }
+        if !tagged_ts.is_empty() && !tagged_ep.is_empty() {
+            out.push_str("## Combinations\n\n| Telescope | Eyepiece | MAGX | TFOV° | Pupil mm |\n|---|---|---|---|---|\n");
+            for t in &tagged_ts {
+                for e in &tagged_ep {
+                    out.push_str(&format!("| {} | {} | {:.0}x | {:.2} | {:.1} |\n",
+                        t.name, e.name,
+                        optics::magx(t.tfl, e.fl),
+                        optics::tfov(t.tfl, e.fl, e.afov),
+                        optics::pupl(t.app, t.tfl, e.fl),
+                    ));
+                }
+            }
+            out.push('\n');
+        }
+        out.push_str("## Observations\n\n_Fill in your notes here._\n");
+        match std::fs::write(path.trim(), out) {
+            Ok(_) => self.status_say(&format!(" Log written to {}", path.trim()), 46),
+            Err(e) => self.status_say(&format!(" Write failed: {}", e), 196),
+        }
+    }
+
+    fn show_version(&mut self) {
+        let msg = format!(" scope v{} - Rust port of telescope-term by Geir Isene", VERSION);
+        self.footer.say(&style::fg(&msg, 117));
+        let _ = Input::getchr(Some(4));
+    }
+
+    fn show_help(&mut self) {
+        // Render a help overlay in the telescope pane (transient).
+        let help = "\n  \
+            scope - terminal tool for amateur astronomers\n\n  \
+            KEYS\n  \
+              t           Add telescope (name,app,fl[,notes])\n  \
+              e           Add eyepiece  (name,fl,afov[,notes])\n  \
+              ENTER       Edit selected\n  \
+              TAB         Switch panels\n  \
+              UP/DOWN     Move cursor\n  \
+              Shift-UP    Move item up\n  \
+              Shift-DOWN  Move item down\n  \
+              HOME/END    Jump to start/end\n  \
+              o           Toggle sort (APP / FL)\n  \
+              SPACE       Tag/untag\n  \
+              u           Untag all\n  \
+              A           Tag all\n  \
+              Ctrl-o      Create observation log with tagged equipment\n  \
+              x           Export tagged items to CSV\n  \
+              X           Export all items to JSON\n  \
+              v           Show version\n  \
+              D           Delete item\n  \
+              r           Redraw\n  \
+              q / Q       Quit (save / no save)\n  \
+              ?           This help\n\n  \
+            Data: ~/.scope   Config: ~/.scope_config\n  \
+            Press any key to close.";
+        self.ts.set_text(help);
+        self.ts.ix = 0;
+        self.ts.full_refresh();
+        let _ = Input::getchr(None);
+        self.render_ts();
+    }
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn scroll_offset(idx: usize, total: usize, h: usize) -> usize {
+    if total <= h { return 0; }
+    let half = h / 2;
+    if idx < half { 0 }
+    else if idx + half >= total { total - h }
+    else { idx - half }
+}
+
+fn hex_to_256(hex: &str) -> u16 {
+    if hex.len() < 6 { return 234; }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as u32;
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as u32;
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as u32;
+    let cv = |c: u32| -> u32 {
+        if c < 48 { 0 } else if c < 115 { 1 } else { (c - 35) / 40 }
+    };
+    (16 + 36 * cv(r) + 6 * cv(g) + cv(b)) as u16
+}
+
+fn chrono_date() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86400);
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}

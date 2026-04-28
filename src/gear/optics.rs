@@ -1,0 +1,84 @@
+//! Optical formulas ported verbatim from Ruby telescope.
+//! All dimensions in millimeters, angles in degrees.
+
+use std::f64::consts::PI;
+
+fn to_rad(deg: f64) -> f64 { deg * PI / 180.0 }
+fn to_deg(rad: f64) -> f64 { rad * 180.0 / PI }
+
+/// Telescope focal ratio (f/#).
+pub fn tfr(app: f64, tfl: f64) -> f64 {
+    if app == 0.0 { 0.0 } else { tfl / app }
+}
+
+/// Magnitude limit (dimmest star visible).
+pub fn mlim(app: f64) -> f64 {
+    if app <= 0.0 { 0.0 } else { 5.0 * (app / 10.0).log10() + 7.5 }
+}
+
+/// Times-eye light gathering.
+pub fn xeye(app: f64) -> f64 {
+    app * app / 49.0
+}
+
+/// Minimum usable magnification.
+pub fn minx(app: f64, tfl: f64) -> f64 {
+    let r = tfr(app, tfl);
+    if r == 0.0 { 0.0 } else { tfl / (7.0 * r) }
+}
+
+/// Eyepiece FL for minimum magnification.
+pub fn mine(app: f64, tfl: f64) -> f64 { 7.0 * tfr(app, tfl) }
+
+/// Maximum usable magnification.
+pub fn maxx(app: f64) -> f64 { 2.0 * app }
+
+/// Eyepiece FL for maximum magnification.
+pub fn maxe(app: f64, tfl: f64) -> f64 {
+    let m = maxx(app);
+    if m == 0.0 { 0.0 } else { tfl / m }
+}
+
+/// Rayleigh separation (arcseconds).
+pub fn sepr(app: f64) -> f64 {
+    if app == 0.0 { 0.0 } else { 3600.0 * to_deg((671e-6 / app).asin()) }
+}
+
+/// Dawes separation (arcseconds).
+pub fn sepd(app: f64) -> f64 {
+    if app == 0.0 { 0.0 } else { 115.824 / app }
+}
+
+// Recommended eyepiece focal lengths:
+pub fn e_st(app: f64, tfl: f64) -> f64 { if app == 0.0 { 0.0 } else { 6.4 * tfl / app } } // star fields
+pub fn e_gx(app: f64, tfl: f64) -> f64 { if app == 0.0 { 0.0 } else { 3.6 * tfl / app } } // galaxies/nebulae
+pub fn e_pl(app: f64, tfl: f64) -> f64 { if app == 0.0 { 0.0 } else { 2.1 * tfl / app } } // planets
+pub fn e_2s(app: f64, tfl: f64) -> f64 { if app == 0.0 { 0.0 } else { 1.3 * tfl / app } } // doubles
+pub fn e_t2(app: f64, tfl: f64) -> f64 { if app == 0.0 { 0.0 } else { 0.7 * tfl / app } } // tight doubles
+
+/// Smallest visible Moon detail (km).
+pub fn moon(tfl: f64) -> f64 {
+    if tfl == 0.0 { 0.0 } else {
+        384e6 * (to_rad(115.824 / tfl) / 360.0).tan()
+    }
+}
+
+/// Smallest visible Sun detail (km).
+pub fn sun(tfl: f64) -> f64 { moon(tfl) / 2.5668 }
+
+/// Magnification (scope + eyepiece).
+pub fn magx(tfl: f64, epfl: f64) -> f64 {
+    if epfl == 0.0 { 0.0 } else { tfl / epfl }
+}
+
+/// True field of view (degrees).
+pub fn tfov(tfl: f64, epfl: f64, afov: f64) -> f64 {
+    let m = magx(tfl, epfl);
+    if m == 0.0 { 0.0 } else { afov / m }
+}
+
+/// Exit pupil (mm).
+pub fn pupl(app: f64, tfl: f64, epfl: f64) -> f64 {
+    let m = magx(tfl, epfl);
+    if m == 0.0 { 0.0 } else { app / m }
+}

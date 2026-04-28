@@ -25,6 +25,7 @@ fn main() {
     }
 
     Crust::init();
+    Crust::clear_screen();
     let mut app = App::new(cfg);
     app.fetch_all();
     app.render_all();
@@ -55,18 +56,21 @@ fn main() {
         match key.as_str() {
             "q" | "Q" => break,
             "g" | "G" => {
-                // Switch to Gear mode. gear::run() takes over the
-                // alt screen and runs its own loop. When it returns
-                // true the user wants to quit astro entirely;
-                // otherwise we resume Sky mode.
+                // Switch to Gear mode. Hand it a snapshot of the
+                // current Sky state so its mag-limit column can
+                // Bortle-adjust and its observation log can auto-fill
+                // date / weather / moon / visible-body context.
+                let env = app.build_sky_env();
                 app.clear_image();
-                if gear::run() {
+                if gear::run(env) {
                     break;
                 }
                 // Resume Sky: redraw everything fresh.
                 app.render_all();
                 if app.current_image.is_some() { app.refresh_image(); }
             }
+            "T" => { app.show_gear_tonight(); }
+            "ESC" => { app.render_footer(); }
             "?" => app.show_help(),
             "UP" | "k" => { app.move_row(-1); app.render_all(); }
             "DOWN" | "j" => { app.move_row(1); app.render_all(); }
@@ -618,7 +622,7 @@ impl App {
     }
 
     fn render_footer(&mut self) {
-        let cmds = "?=Help g=Gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Starchart S=Open A=APOD r=Redraw R=Refetch W=Write q=Quit";
+        let cmds = "?=Help g=Gear T=Tonight-gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Starchart S=Open A=APOD r=Redraw R=Refetch W=Write q=Quit";
         self.footer.say(cmds);
     }
 
@@ -719,34 +723,176 @@ impl App {
     }
 
     fn show_help(&mut self) {
-        let help = "\n \
-            Astro - sky panel + telescope/eyepiece catalog.\n \
-            Sky mode: weather, ephemeris, events, starchart, APOD.\n \
-            Gear mode (press g): catalog telescopes/eyepieces, compute optics.\n\n \
-            * Weather forecast with coloring based on cloud/humidity/temp/wind limits\n \
-            * Visibility bars for Sun, Moon and planets per hour\n \
-            * Moon phase shown via bar shade (new=dark, full=bright)\n \
-            * Astronomical events from in-the-sky.org\n \
-            * Ephemeris table (RA, Dec, distance, rise, transit, set)\n \
-            * Starchart (lat > 23) and NASA APOD inline image display\n\n \
-            SKY KEYS\n \
-             ? = This help             ENTER = Refresh starchart/image\n \
-             g = Switch to Gear mode\n \
-             UP/DOWN = Move row        r = Redraw all panes\n \
-             PgUP/PgDOWN = Page        R = Refetch weather + events\n \
-             HOME/END = First/Last     e = Show all events\n \
-             l = Location name         s = Get starchart for selected time\n \
-             a = Latitude              S = Open starchart in image viewer\n \
-             o = Longitude             A = Show Astronomy Picture Of the Day\n \
-             c = Cloud limit           h = Humidity limit\n \
-             t = Temp lower limit      w = Wind limit\n \
-             b = Bortle scale (1-9)    W = Save config\n \
-             q = Quit";
-        self.main_p.set_text(help);
-        self.main_p.ix = 0;
+        let help = "\n  \
+            astro v0.1.x — Sky mode\n  \
+            Plan your observations with weather, ephemeris and events.\n  \
+            Press g to flip into Gear mode (telescope / eyepiece catalog).\n\n  \
+            NAVIGATION\n  \
+              UP / DOWN, k / j      Move row\n  \
+              PgUP / PgDOWN, K / J  Page\n  \
+              HOME / END            First / last hour\n\n  \
+            VIEW\n  \
+              g       Switch to Gear mode\n  \
+              T       Tonight's gear suggestions (for currently-visible bodies)\n  \
+              s       Get starchart for the selected hour\n  \
+              S       Open starchart in external image viewer\n  \
+              A       Astronomy Picture of the Day\n  \
+              ENTER   Refresh current image\n  \
+              e       Show all upcoming astronomical events\n  \
+              r       Redraw all panes\n  \
+              R       Refetch weather + events\n\n  \
+            CONFIG (saved with W)\n  \
+              l       Location name\n  \
+              a / o   Latitude / longitude\n  \
+              c       Cloud-cover limit (%)\n  \
+              h       Humidity limit (%)\n  \
+              t       Temperature lower limit (°C)\n  \
+              w       Wind limit (m/s)\n  \
+              b       Bortle scale (1–9)\n  \
+              W       Save config to ~/.astro/config.yml\n\n  \
+              ?       This help\n  \
+              q / Q   Quit\n\n  \
+            ESC or q closes this popup.";
+        // Kitty places images at z=1 which sits above text, so the popup
+        // would appear behind the starchart / APOD. Remember whether an
+        // image was showing, hide it for the duration of the popup, then
+        // restore on dismiss.
+        let had_image = self.current_image.is_some();
+        if had_image { self.clear_image(); }
+        let (cols, rows) = Crust::terminal_size();
+        let w = cols.saturating_sub(8).min(78);
+        let h = rows.saturating_sub(4).min(34);
+        let mut popup = crust::Popup::centered(w, h, 252, 234);
+        popup.pane.fg = 252;
+        popup.pane.bg = 234;
+        let _ = popup.modal(help);
+        // Wipe the entire screen — popup border and any popup content
+        // sitting in the gaps between panes (cols outside left/main_p,
+        // bottom rows below footer) wouldn't be cleaned by per-pane
+        // refresh otherwise. full_refresh on each pane invalidates its
+        // prev_frame so render_all definitely repaints.
+        Crust::clear_screen();
+        self.header.full_refresh();
+        self.titles.full_refresh();
+        self.left.full_refresh();
         self.main_p.full_refresh();
-        let _ = Input::getchr(None);
-        self.render_main();
+        self.footer.full_refresh();
+        self.render_all();
+        if self.current_image.is_some() { self.refresh_image(); }
+    }
+
+    /// Build a snapshot of Sky-mode state for Gear mode to consume
+    /// (Bortle-aware mag limit + observation-log auto-fill).
+    fn build_sky_env(&self) -> gear::SkyEnv {
+        let h = match self.hours.get(self.index) {
+            Some(h) => h,
+            None => return gear::SkyEnv::default(),
+        };
+        let pd = self.planets.get(&h.date);
+        let moon_summary = pd.map(|p| format!("{} {}%", p.mph_s, p.mphase))
+            .unwrap_or_default();
+        let visible_bodies = pd.map(|p| {
+            let names: Vec<String> = p.bodies.iter()
+                .filter(|b| {
+                    orbit::is_above(b.rise_h, b.set_h, b.always_up, b.never_up,
+                        h.hour as f64)
+                })
+                .filter(|b| b.name != "sun" && b.name != "moon")
+                .map(|b| orbit::body_display(b.name).to_string())
+                .collect();
+            names.join(", ")
+        }).unwrap_or_default();
+        let weather = format!(
+            "{:.1}°C  clouds {}%  hum {}%  wind {:.1} m/s {}",
+            h.temp, h.cloud, h.humidity as i64, h.wind, h.wind_dir_name,
+        );
+        gear::SkyEnv {
+            date: h.date.clone(),
+            hour_str: h.hour_str.clone(),
+            location: self.cfg.location.clone(),
+            bortle: self.cfg.bortle,
+            moon_summary,
+            weather,
+            visible_bodies,
+        }
+    }
+
+    /// Cross-mode feature: enumerate currently-visible bodies × user's
+    /// gear catalog and surface the best telescope+eyepiece combos for
+    /// each. Triggered by `T` in Sky mode.
+    fn show_gear_tonight(&mut self) {
+        let h = match self.hours.get(self.index).cloned() {
+            Some(h) => h,
+            None => return,
+        };
+        let pd = match self.planets.get(&h.date) {
+            Some(p) => p,
+            None => return,
+        };
+        let store = gear::data::Store::load();
+
+        let mut buf = String::new();
+        buf.push_str(&format!(
+            " Tonight's gear suggestions  ({} {}:00, lat {:.2}°)\n\n",
+            h.date, h.hour_str, self.cfg.lat,
+        ));
+
+        if store.telescopes.is_empty() || store.eyepieces.is_empty() {
+            buf.push_str("\n  Your gear catalog is empty.\n  \
+                Press g to switch to Gear mode, then t / e to add\n  \
+                a telescope and an eyepiece. Then come back here.\n");
+        } else {
+            // Filter to bodies above the horizon at the selected hour.
+            let visible: Vec<&orbit::BodyObs> = pd.bodies.iter()
+                .filter(|b| {
+                    orbit::is_above(b.rise_h, b.set_h, b.always_up, b.never_up,
+                        h.hour as f64)
+                })
+                .collect();
+            if visible.is_empty() {
+                buf.push_str("\n  No bodies above the horizon at this hour.\n");
+            } else {
+                for b in &visible {
+                    let display_name = orbit::body_display(b.name);
+                    buf.push_str(&format!("\n  {}  rises {} sets {}\n",
+                        display_name, b.rise, b.set));
+                    for t in &store.telescopes {
+                        for e in &store.eyepieces {
+                            let m = gear::optics::magx(t.tfl, e.fl);
+                            let tfov = gear::optics::tfov(t.tfl, e.fl, e.afov);
+                            let pupil = gear::optics::pupl(t.app, t.tfl, e.fl);
+                            let max_useful = gear::optics::maxx(t.app);
+                            let warn = if m > max_useful { " ⚠" } else { "" };
+                            buf.push_str(&format!(
+                                "    {} + {}: {:.0}x  TFOV {:.2}°  exit pupil {:.1}mm{}\n",
+                                t.name, e.name, m, tfov, pupil, warn,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        buf.push_str("\n  ESC or q closes this popup.\n");
+
+        // Image conflict (kitty z=1) — hide image during the popup.
+        let had_image = self.current_image.is_some();
+        if had_image { self.clear_image(); }
+
+        let (cols, rows) = Crust::terminal_size();
+        let w = cols.saturating_sub(8).min(80);
+        let h_pop = rows.saturating_sub(4).min(36);
+        let mut popup = crust::Popup::centered(w, h_pop, 252, 234);
+        let _ = popup.modal(&buf);
+
+        Crust::clear_screen();
+        self.header.full_refresh();
+        self.titles.full_refresh();
+        self.left.full_refresh();
+        self.main_p.full_refresh();
+        self.footer.full_refresh();
+        self.render_all();
+        if had_image { self.refresh_image(); }
     }
 
     fn show_all_events(&mut self) {

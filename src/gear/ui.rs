@@ -11,12 +11,13 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// screen, runs its own input loop, returns when the user presses
 /// `g` (flip back to Sky mode) or `q`/`Q` (quit astro entirely).
 /// Returns true if astro should exit; false if it should resume Sky.
-pub fn run() -> bool {
+pub fn run(env: super::SkyEnv) -> bool {
     let cfg = Config::load();
     let mut store = Store::load();
 
     Crust::clear_screen();
     let mut app = App::new(cfg, store.clone());
+    app.env = env;
     app.render_all();
 
     let mut quit_astro = false;
@@ -36,6 +37,12 @@ pub fn run() -> bool {
                 break;
             }
             "Q" => { quit_astro = true; break; }
+            "ESC" => {
+                // Clear any lingering status message; restore the
+                // default key-hint footer.
+                app.status = None;
+                app.render_footer();
+            }
             "?" => app.show_help(),
             "t" => { app.add_telescope(); app.render_all(); }
             "e" => { app.add_eyepiece(); app.render_all(); }
@@ -88,6 +95,9 @@ struct App {
     ep_tagged: Vec<bool>,
     sort_on: bool,
     status: Option<(String, u8)>,
+    /// Snapshot of Sky-mode state at mode-switch time. Drives the
+    /// Bortle-aware mag-limit column and observation-log auto-fill.
+    env: super::SkyEnv,
 }
 
 impl App {
@@ -104,6 +114,7 @@ impl App {
             ts_idx: 0, ep_idx: 0, ts_tagged, ep_tagged,
             sort_on: false,
             status: None,
+            env: super::SkyEnv::default(),
         }
     }
 
@@ -140,14 +151,26 @@ impl App {
         let focus = if self.focus == Focus::Ts { "Telescopes" } else { "Eyepieces" };
         let ts_tag = self.ts_tagged.iter().filter(|b| **b).count();
         let ep_tag = self.ep_tagged.iter().filter(|b| **b).count();
-        let left = format!(" scope v{}   [{}]   TS tagged: {}   EP tagged: {}   sort: {}",
-            VERSION, focus, ts_tag, ep_tag, if self.sort_on { "on" } else { "off" });
+        let bortle_note = if self.env.bortle > 0.0 {
+            format!("   <MGN @ Bortle {:.0}", self.env.bortle)
+        } else { String::new() };
+        let left = format!(" astro v{} [Gear]   [{}]   TS tagged: {}   EP tagged: {}   sort: {}{}",
+            VERSION, focus, ts_tag, ep_tag,
+            if self.sort_on { "on" } else { "off" }, bortle_note);
         self.header.say(&style::bold(&left));
     }
 
     fn render_ts_head(&mut self) {
-        let line = "  Telescope           APP     TFL   F/?   <MGN  xEYE    MINx     MAXx  SEP-R SEP-D    *FLD  GLXY  PLNT  DBL*  >2*<   MOON   SUN";
-        self.ts_head.say(&style::bold(line));
+        // Column widths must mirror the data row format in render_ts.
+        // SEP-R and SEP-D widths include their trailing quote (8 / 7).
+        let line = format!(
+            "  {:<18}{:>7}{:>8}{:>6}{:>6}{:>6}{:>10}{:>9}{:>8}{:>7}{:>7}{:>6}{:>6}{:>6}{:>6}{:>7}{:>6}",
+            "Telescope",
+            "APP", "TFL", "F/?", "<MGN", "xEYE", "MINx", "MAXx",
+            "SEP-R", "SEP-D",
+            "*FLD", "GLXY", "PLNT", "DBL*", ">2*<", "MOON", "SUN",
+        );
+        self.ts_head.say(&style::bold(&line));
     }
 
     fn render_ts(&mut self) {
@@ -157,14 +180,22 @@ impl App {
             let t = &self.store.telescopes[i];
             let tagged = *self.ts_tagged.get(i).unwrap_or(&false);
             let (app, tfl) = (t.app, t.tfl);
-            let row = format!(
-                "{}{:<18}{:>7.0}{:>8.0}{:>6.1}{:>6.1}{:>6.0}{:>10}{:>9}{:>7.2}\"{:>6.2}\"{:>7.0}{:>6.0}{:>6.0}{:>6.0}{:>6.0}{:>7.0}{:>6.0}",
-                if tagged { style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8)) + " " } else { "  ".to_string() },
+            let focused = self.focus == Focus::Ts && vis_i == self.ts_idx;
+            // Build cursor + tag markers explicitly (1 cell each) so we
+            // never have to byte-slice ANSI sequences.
+            let cursor = if focused { "\u{2192}" } else { " " };
+            let tag = if tagged {
+                style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8))
+            } else {
+                " ".to_string()
+            };
+            let body = format!(
+                "{:<18}{:>7.0}{:>8.0}{:>6.1}{:>6.1}{:>6.0}{:>10}{:>9}{:>7.2}\"{:>6.2}\"{:>7.0}{:>6.0}{:>6.0}{:>6.0}{:>6.0}{:>7.0}{:>6.0}",
                 t.name,
                 app,
                 tfl,
                 optics::tfr(app, tfl),
-                optics::mlim(app),
+                optics::mlim_bortle(app, self.env.bortle),
                 optics::xeye(app),
                 format!("{:.0}({:.0}x)", optics::mine(app, tfl), optics::minx(app, tfl)),
                 format!("{:.0}({:.0}x)", optics::maxe(app, tfl), optics::maxx(app)),
@@ -178,10 +209,9 @@ impl App {
                 optics::moon(tfl),
                 optics::sun(tfl),
             );
-            let focused = self.focus == Focus::Ts && vis_i == self.ts_idx;
+            let row = format!("{}{}{}", cursor, tag, body);
             let line = if focused {
-                let marker = format!("\u{2192}{}", &row[1..]);
-                format!("\x1b[48;5;{}m{}\x1b[0m", self.cfg.cursor_bg, marker)
+                style::bg(&row, self.cfg.cursor_bg as u8)
             } else {
                 row
             };
@@ -196,8 +226,12 @@ impl App {
     }
 
     fn render_ep_head(&mut self) {
-        let line = "  Eyepiece              FL  AFOV   MAGX  TFOV   PPL   2BLW";
-        self.ep_head.say(&style::bold(line));
+        // Match the data row: name(18) + FL(7) + AFOV(6) + MAGX(7) + TFOV(6) + PPL(6) + 2BLW(8)
+        let line = format!(
+            "  {:<18}{:>7}{:>6}{:>7}{:>6}{:>6}{:>8}",
+            "Eyepiece", "FL", "AFOV", "MAGX", "TFOV", "PPL", "2BLW",
+        );
+        self.ep_head.say(&style::bold(&line));
     }
 
     fn render_ep(&mut self) {
@@ -220,16 +254,21 @@ impl App {
                 Some(t) => format!("{:.0}x", 2.0 * optics::magx(t.tfl, e.fl)),
                 None => "-".into(),
             };
-            let row = format!(
-                "{}{:<18}{:>7.1}{:>6.0}{:>7.0}{:>6.2}{:>6.1}{:>8}",
-                if tagged { style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8)) + " " } else { "  ".to_string() },
+            let focused = self.focus == Focus::Ep && vis_i == self.ep_idx;
+            let cursor = if focused { "\u{2192}" } else { " " };
+            let tag = if tagged {
+                style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8))
+            } else {
+                " ".to_string()
+            };
+            let body = format!(
+                "{:<18}{:>7.1}{:>6.0}{:>7.0}{:>6.2}{:>6.1}{:>8}",
                 e.name, e.fl, e.afov,
                 magx, tfov, ppl, barlow,
             );
-            let focused = self.focus == Focus::Ep && vis_i == self.ep_idx;
+            let row = format!("{}{}{}", cursor, tag, body);
             let line = if focused {
-                let marker = format!("\u{2192}{}", &row[1..]);
-                format!("\x1b[48;5;{}m{}\x1b[0m", self.cfg.cursor_bg, marker)
+                style::bg(&row, self.cfg.cursor_bg as u8)
             } else {
                 row
             };
@@ -520,7 +559,28 @@ impl App {
         let path = self.footer.ask(" Observation log (path): ", &default);
         if path.trim().is_empty() { return; }
         let mut out = String::from("# Observation Log\n\n");
-        out.push_str(&format!("Date: {}\n\n", chrono_date()));
+        out.push_str(&format!("Date: {}\n", chrono_date()));
+        // Auto-fill conditions from the Sky-mode snapshot taken when the
+        // user pressed `g`. Anything missing is just omitted.
+        if !self.env.location.is_empty() {
+            out.push_str(&format!("Location: {}\n", self.env.location));
+        }
+        if !self.env.hour_str.is_empty() {
+            out.push_str(&format!("Time: {}:00\n", self.env.hour_str));
+        }
+        if !self.env.weather.is_empty() {
+            out.push_str(&format!("Weather: {}\n", self.env.weather));
+        }
+        if !self.env.moon_summary.is_empty() {
+            out.push_str(&format!("Moon: {}\n", self.env.moon_summary));
+        }
+        if !self.env.visible_bodies.is_empty() {
+            out.push_str(&format!("Visible: {}\n", self.env.visible_bodies));
+        }
+        if self.env.bortle > 0.0 {
+            out.push_str(&format!("Bortle: {:.0}\n", self.env.bortle));
+        }
+        out.push('\n');
         let tagged_ts: Vec<&Telescope> = self.store.telescopes.iter().enumerate()
             .filter(|(i, _)| *self.ts_tagged.get(*i).unwrap_or(&false))
             .map(|(_, t)| t).collect();
@@ -566,43 +626,57 @@ impl App {
     }
 
     fn show_version(&mut self) {
-        let msg = format!(" scope v{} - Rust port of telescope-term by Geir Isene", VERSION);
+        let msg = format!(" astro v{} (Gear mode) - port of telescope-term by Geir Isene", VERSION);
         self.footer.say(&style::fg(&msg, 117));
         let _ = Input::getchr(Some(4));
     }
 
     fn show_help(&mut self) {
-        // Render a help overlay in the telescope pane (transient).
-        let help = "\n  \
-            scope - terminal tool for amateur astronomers\n\n  \
-            KEYS\n  \
-              t           Add telescope (name,app,fl[,notes])\n  \
-              e           Add eyepiece  (name,fl,afov[,notes])\n  \
-              ENTER       Edit selected\n  \
-              TAB         Switch panels\n  \
-              UP/DOWN     Move cursor\n  \
-              Shift-UP    Move item up\n  \
-              Shift-DOWN  Move item down\n  \
-              HOME/END    Jump to start/end\n  \
-              o           Toggle sort (APP / FL)\n  \
-              SPACE       Tag/untag\n  \
-              u           Untag all\n  \
-              A           Tag all\n  \
-              Ctrl-o      Create observation log with tagged equipment\n  \
-              x           Export tagged items to CSV\n  \
-              X           Export all items to JSON\n  \
-              v           Show version\n  \
-              D           Delete item\n  \
-              r           Redraw\n  \
-              q / Q       Quit (save / no save)\n  \
-              ?           This help\n\n  \
-            Data: ~/.scope   Config: ~/.scope_config\n  \
-            Press any key to close.";
-        self.ts.set_text(help);
-        self.ts.ix = 0;
+        let help = format!("\n  \
+            astro v{} — Gear mode\n  \
+            Telescope and eyepiece catalog with optics calculations.\n  \
+            Press g to flip back to Sky mode.\n\n  \
+            CATALOG\n  \
+              t            Add telescope (name, aperture mm, focal length mm[, notes])\n  \
+              e            Add eyepiece  (name, focal length mm, AFOV°[, notes])\n  \
+              ENTER        Edit selected\n  \
+              D            Delete selected\n\n  \
+            NAVIGATION\n  \
+              UP / DOWN, k / j      Move cursor\n  \
+              Shift-UP / Shift-DOWN Reorder\n  \
+              HOME / END            Jump to start / end\n  \
+              TAB                   Switch panel (telescope ↔ eyepiece)\n  \
+              o                     Toggle sort (APP / FL)\n\n  \
+            TAGS & EXPORT\n  \
+              SPACE        Tag / untag\n  \
+              A            Tag all\n  \
+              u            Untag all\n  \
+              Ctrl-O       Create observation log from tagged equipment\n  \
+              x            Export tagged to CSV\n  \
+              X            Export all to JSON\n\n  \
+            OTHER\n  \
+              g            Back to Sky mode\n  \
+              r            Redraw\n  \
+              v            Show version\n  \
+              ?            This help\n  \
+              q / Q        Quit astro (save / no save)\n\n  \
+            Data: ~/.astro/gear.json   Config: ~/.astro/gear_config.json\n  \
+            ESC or q closes this popup.", VERSION);
+        let (cols, rows) = Crust::terminal_size();
+        let w = cols.saturating_sub(8).min(80);
+        let h = rows.saturating_sub(4).min(36);
+        let mut popup = crust::Popup::centered(w, h, 252, 234);
+        let _ = popup.modal(&help);
+        // Wipe the screen so the popup border and any content sitting
+        // in the gaps between panes is removed.
+        Crust::clear_screen();
+        self.header.full_refresh();
+        self.ts_head.full_refresh();
         self.ts.full_refresh();
-        let _ = Input::getchr(None);
-        self.render_ts();
+        self.ep_head.full_refresh();
+        self.ep.full_refresh();
+        self.footer.full_refresh();
+        self.render_all();
     }
 }
 

@@ -11,9 +11,22 @@ pub fn tfr(app: f64, tfl: f64) -> f64 {
     if app == 0.0 { 0.0 } else { tfl / app }
 }
 
-/// Magnitude limit (dimmest star visible).
+/// Magnitude limit (dimmest star visible) under dark skies.
 pub fn mlim(app: f64) -> f64 {
     if app <= 0.0 { 0.0 } else { 5.0 * (app / 10.0).log10() + 7.5 }
+}
+
+/// Magnitude limit adjusted for the observer's Bortle scale.
+/// Bortle 1–3 is roughly the textbook dark-sky condition (no penalty).
+/// Bortle 4 onward each costs ~0.4 mag of limiting magnitude until urban
+/// skies (Bortle 8–9) wipe out roughly two magnitudes' worth of dim
+/// targets compared to a dark site.
+pub fn mlim_bortle(app: f64, bortle: f64) -> f64 {
+    let dark = mlim(app);
+    if dark <= 0.0 { return 0.0; }
+    let b = bortle.clamp(1.0, 9.0);
+    let penalty = (b - 3.0).max(0.0) * 0.4;
+    (dark - penalty).max(0.0)
 }
 
 /// Times-eye light gathering.

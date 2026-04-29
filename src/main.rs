@@ -25,6 +25,7 @@ fn main() {
     }
 
     Crust::init();
+    Crust::set_app_identity("Astro");
     Crust::clear_screen();
     let mut app = App::new(cfg);
     app.fetch_all();
@@ -65,7 +66,17 @@ fn main() {
                 if gear::run(env) {
                     break;
                 }
-                // Resume Sky: redraw everything fresh.
+                // Resume Sky. Gear overdrew the screen but our panes'
+                // prev_frame still says they have content, so a plain
+                // render_all would diff-skip rows that match. Wipe
+                // screen + invalidate every pane's prev_frame so all
+                // content gets redrawn from scratch.
+                Crust::clear_screen();
+                app.header.full_refresh();
+                app.titles.full_refresh();
+                app.left.full_refresh();
+                app.main_p.full_refresh();
+                app.footer.full_refresh();
                 app.render_all();
                 if app.current_image.is_some() { app.refresh_image(); }
             }

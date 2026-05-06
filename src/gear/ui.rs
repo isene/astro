@@ -87,6 +87,8 @@ struct App {
     ts: Pane,
     ep_head: Pane,
     ep: Pane,
+    combo_head: Pane,
+    combo: Pane,
     footer: Pane,
     focus: Focus,
     ts_idx: usize,
@@ -109,7 +111,9 @@ impl App {
         Self {
             cfg, store, cols, rows,
             header: panes.0, ts_head: panes.1, ts: panes.2,
-            ep_head: panes.3, ep: panes.4, footer: panes.5,
+            ep_head: panes.3, ep: panes.4,
+            combo_head: panes.5, combo: panes.6,
+            footer: panes.7,
             focus: Focus::Ts,
             ts_idx: 0, ep_idx: 0, ts_tagged, ep_tagged,
             sort_on: false,
@@ -118,10 +122,20 @@ impl App {
         }
     }
 
-    fn build_panes(cols: u16, rows: u16, cfg: &Config) -> (Pane, Pane, Pane, Pane, Pane, Pane) {
+    fn build_panes(cols: u16, rows: u16, cfg: &Config)
+        -> (Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane)
+    {
         let half = rows / 2;
         let ts_bg = hex_to_256(&cfg.ts_header_bg);
         let ep_bg = hex_to_256(&cfg.ep_header_bg);
+
+        // Bottom half splits horizontally: EP list on the left, scope×EP
+        // combo details on the right. EP rows are 80 cols wide (2 cursor
+        // + 36 name + 7+6+7+6+6+8 numerics + a 2-col gutter), so the
+        // combo pane gets everything past col 80. Below 130 cols total
+        // we collapse the combo pane and let the EP list sprawl.
+        let ep_w: u16 = if cols >= 130 { 80 } else { cols };
+        let combo_w: u16 = cols.saturating_sub(ep_w);
 
         let mut header = Pane::new(1, 1, cols, 1, 255, 236);
         header.wrap = false;
@@ -129,13 +143,18 @@ impl App {
         ts_head.wrap = false;
         let mut ts = Pane::new(1, 3, cols, half.saturating_sub(3), cfg.text_color, 0);
         ts.wrap = false;
-        let mut ep_head = Pane::new(1, half, cols, 1, 255, ep_bg);
+        let mut ep_head = Pane::new(1, half, ep_w, 1, 255, ep_bg);
         ep_head.wrap = false;
-        let mut ep = Pane::new(1, half + 1, cols, rows.saturating_sub(half + 1), cfg.text_color, 0);
+        let mut ep = Pane::new(1, half + 1, ep_w, rows.saturating_sub(half + 1), cfg.text_color, 0);
         ep.wrap = false;
+        let mut combo_head = Pane::new(ep_w + 1, half, combo_w.max(1), 1, 255, ep_bg);
+        combo_head.wrap = false;
+        let mut combo = Pane::new(ep_w + 1, half + 1, combo_w.max(1),
+                                  rows.saturating_sub(half + 1), cfg.text_color, 0);
+        combo.wrap = true;
         let mut footer = Pane::new(1, rows, cols, 1, 255, 236);
         footer.wrap = false;
-        (header, ts_head, ts, ep_head, ep, footer)
+        (header, ts_head, ts, ep_head, ep, combo_head, combo, footer)
     }
 
     fn render_all(&mut self) {
@@ -144,6 +163,8 @@ impl App {
         self.render_ts();
         self.render_ep_head();
         self.render_ep();
+        self.render_combo_head();
+        self.render_combo();
         self.render_footer();
     }
 
@@ -164,7 +185,7 @@ impl App {
         // Column widths must mirror the data row format in render_ts.
         // SEP-R and SEP-D widths include their trailing quote (8 / 7).
         let line = format!(
-            "  {:<18}{:>7}{:>8}{:>6}{:>6}{:>6}{:>10}{:>9}{:>8}{:>7}{:>7}{:>6}{:>6}{:>6}{:>6}{:>7}{:>6}",
+            "  {:<28}{:>7}{:>8}{:>6}{:>6}{:>6}{:>10}{:>9}{:>8}{:>7}{:>7}{:>6}{:>6}{:>6}{:>6}{:>7}{:>6}",
             "Telescope",
             "APP", "TFL", "F/?", "<MGN", "xEYE", "MINx", "MAXx",
             "SEP-R", "SEP-D",
@@ -190,8 +211,8 @@ impl App {
                 " ".to_string()
             };
             let body = format!(
-                "{:<18}{:>7.0}{:>8.0}{:>6.1}{:>6.1}{:>6.0}{:>10}{:>9}{:>7.2}\"{:>6.2}\"{:>7.0}{:>6.0}{:>6.0}{:>6.0}{:>6.0}{:>7.0}{:>6.0}",
-                t.name,
+                "{:<28}{:>7.0}{:>8.0}{:>6.1}{:>6.1}{:>6.0}{:>10}{:>9}{:>7.2}\"{:>6.2}\"{:>7.0}{:>6.0}{:>6.0}{:>6.0}{:>6.0}{:>7.0}{:>6.0}",
+                truncate_or_pad(&t.name, 28),
                 app,
                 tfl,
                 optics::tfr(app, tfl),
@@ -226,9 +247,9 @@ impl App {
     }
 
     fn render_ep_head(&mut self) {
-        // Match the data row: name(18) + FL(7) + AFOV(6) + MAGX(7) + TFOV(6) + PPL(6) + 2BLW(8)
+        // Match the data row: name(36) + FL(7) + AFOV(6) + MAGX(7) + TFOV(6) + PPL(6) + 2BLW(8)
         let line = format!(
-            "  {:<18}{:>7}{:>6}{:>7}{:>6}{:>6}{:>8}",
+            "  {:<36}{:>7}{:>6}{:>7}{:>6}{:>6}{:>8}",
             "Eyepiece", "FL", "AFOV", "MAGX", "TFOV", "PPL", "2BLW",
         );
         self.ep_head.say(&style::bold(&line));
@@ -262,8 +283,8 @@ impl App {
                 " ".to_string()
             };
             let body = format!(
-                "{:<18}{:>7.1}{:>6.0}{:>7.0}{:>6.2}{:>6.1}{:>8}",
-                e.name, e.fl, e.afov,
+                "{:<36}{:>7.1}{:>6.0}{:>7.0}{:>6.2}{:>6.1}{:>8}",
+                truncate_or_pad(&e.name, 36), e.fl, e.afov,
                 magx, tfov, ppl, barlow,
             );
             let row = format!("{}{}{}", cursor, tag, body);
@@ -280,6 +301,101 @@ impl App {
         self.ep.set_text(&lines.join("\n"));
         self.ep.ix = scroll_offset(self.ep_idx, lines.len(), self.ep.h as usize);
         self.ep.full_refresh();
+    }
+
+    fn render_combo_head(&mut self) {
+        if self.combo.w <= 1 { return; }
+        self.combo_head.say(&style::bold("  Scope × EP combo"));
+    }
+
+    fn render_combo(&mut self) {
+        if self.combo.w <= 1 { return; }
+        let ts = self.current_ts().cloned();
+        let ep = self.current_ep().cloned();
+        let mut lines: Vec<String> = Vec::new();
+
+        match (ts, ep) {
+            (Some(t), Some(e)) => {
+                let m = optics::magx(t.tfl, e.fl);
+                let fov = optics::tfov(t.tfl, e.fl, e.afov);
+                let pupil = optics::pupl(t.app, t.tfl, e.fl);
+                let max_useful = optics::maxx(t.app);
+                let min_useful = optics::minx(t.app, t.tfl);
+
+                lines.push(style::bold(&format!(" {}", t.name)));
+                lines.push(format!(" × {}", e.name));
+                lines.push(String::new());
+
+                // Magnification — colour the status by zone.
+                let m_pct_max = if max_useful > 0.0 { m / max_useful * 100.0 } else { 0.0 };
+                let (m_status, m_color) = if m > max_useful {
+                    ("over max-useful", 196u8)
+                } else if m < min_useful {
+                    ("below min-useful", 208u8)
+                } else if m_pct_max > 80.0 {
+                    ("near max", 220u8)
+                } else if m_pct_max < 30.0 {
+                    ("low power", 117u8)
+                } else {
+                    ("good", 46u8)
+                };
+                lines.push(format!(" Magnification:  {:.0}×", m));
+                lines.push(format!("   {:.0}% of max-useful ({:.0}×)   {}",
+                    m_pct_max, max_useful, style::fg(m_status, m_color)));
+                lines.push(String::new());
+
+                // True FOV plus framing.
+                let fov_arcmin = fov * 60.0;
+                lines.push(format!(" True FOV:       {:.2}°  ({:.0}')", fov, fov_arcmin));
+                let moons = fov / 0.5;
+                if moons >= 1.5 {
+                    lines.push(format!("   ~{:.1} full Moons across", moons));
+                } else if moons >= 0.6 {
+                    lines.push(format!("   {:.0}% of full Moon", moons * 100.0));
+                } else {
+                    lines.push(format!("   tight: {:.0}% of full Moon", moons * 100.0));
+                }
+                lines.push(framing_hint(fov_arcmin));
+                lines.push(String::new());
+
+                // Exit pupil with eye-physiology assessment.
+                let (pq_label, pq_color) = pupil_quality(pupil);
+                lines.push(format!(" Exit pupil:     {:.2} mm", pupil));
+                lines.push(format!("   {}", style::fg(pq_label, pq_color)));
+                lines.push(String::new());
+
+                // Best target use, matched against e_st/e_gx/e_pl/e_2s/e_t2.
+                lines.push(format!(" Best target:    {}", classify_target(t.app, t.tfl, e.fl)));
+                lines.push(String::new());
+
+                // 2× Barlow yields.
+                let m_b = m * 2.0;
+                let pupil_b = pupil / 2.0;
+                let barlow_q = if m_b > max_useful { " (overshoots max)" } else { "" };
+                lines.push(style::fg(" With 2× Barlow", 245));
+                lines.push(format!("   {:.0}× / pupil {:.2} mm{}", m_b, pupil_b, barlow_q));
+                lines.push(String::new());
+
+                // Notes pulled straight from the equipment record so the
+                // user can leave reminders ("doesn't grip ETX-90 focuser",
+                // etc.) without leaving the gear list.
+                if !t.notes.is_empty() || !e.notes.is_empty() {
+                    lines.push(style::fg(" Notes", 245));
+                    if !t.notes.is_empty() {
+                        lines.push(format!("   • {}", t.notes));
+                    }
+                    if !e.notes.is_empty() {
+                        lines.push(format!("   • {}", e.notes));
+                    }
+                }
+            }
+            _ => {
+                lines.push(style::fg(" (select telescope and eyepiece)", 245));
+            }
+        }
+
+        self.combo.set_text(&lines.join("\n"));
+        self.combo.full_refresh();
     }
 
     fn render_footer(&mut self) {
@@ -324,6 +440,9 @@ impl App {
     }
     fn current_ts(&self) -> Option<&Telescope> {
         self.current_ts_orig_idx().and_then(|i| self.store.telescopes.get(i))
+    }
+    fn current_ep(&self) -> Option<&Eyepiece> {
+        self.current_ep_orig_idx().and_then(|i| self.store.eyepieces.get(i))
     }
 
     fn toggle_focus(&mut self) {
@@ -675,9 +794,78 @@ impl App {
         self.ts.full_refresh();
         self.ep_head.full_refresh();
         self.ep.full_refresh();
+        self.combo_head.full_refresh();
+        self.combo.full_refresh();
         self.footer.full_refresh();
         self.render_all();
     }
+}
+
+/// Truncate to char-count `n` (with an ellipsis when shortened) or
+/// return the original. Format!'s `{:<N}` uses *byte* width, so a
+/// 24-char telescope name with no multibyte chars is fine — but the
+/// ellipsis-on-truncate is still nice when a future entry is wider
+/// than the column.
+fn truncate_or_pad(s: &str, n: usize) -> String {
+    let cc = s.chars().count();
+    if cc <= n { s.to_string() }
+    else { format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>()) }
+}
+
+/// Match the user's eyepiece focal length against the five recommended
+/// per-target focal lengths from `optics::e_*` and return the closest
+/// label. Helps the user see "this combo is great for galaxies" at a
+/// glance instead of mentally translating the mm.
+fn classify_target(app: f64, tfl: f64, epfl: f64) -> &'static str {
+    let candidates = [
+        (super::optics::e_st(app, tfl), "wide star fields"),
+        (super::optics::e_gx(app, tfl), "galaxies / nebulae"),
+        (super::optics::e_pl(app, tfl), "planets"),
+        (super::optics::e_2s(app, tfl), "double stars"),
+        (super::optics::e_t2(app, tfl), "tight doubles"),
+    ];
+    let mut best: (f64, &'static str) = (f64::INFINITY, "—");
+    for (target_fl, label) in candidates {
+        let dist = (epfl - target_fl).abs();
+        if dist < best.0 { best = (dist, label); }
+    }
+    best.1
+}
+
+/// Translate true-field arcminutes into something the brain has a
+/// chance with — Andromeda, Pleiades, an Orion Nebula etc. The list
+/// is deliberately short; framing dozens of targets becomes a
+/// catalogue, not a hint.
+fn framing_hint(fov_arcmin: f64) -> String {
+    // (object, span in arcmin, label)
+    let comps: &[(&str, f64)] = &[
+        ("M31 (Andromeda) is 178'", 178.0),
+        ("Pleiades cluster is ~110'", 110.0),
+        ("M44 (Beehive) is ~95'", 95.0),
+        ("Orion Nebula is ~85'", 85.0),
+        ("Moon is 31'", 31.0),
+        ("Jupiter is ~0.7'", 0.7),
+        ("Mars max ~0.4'", 0.4),
+    ];
+    // Pick the largest object that still fits; otherwise mention the
+    // smallest one that overflows the field as a "fits inside" comparison.
+    for (label, span) in comps {
+        if *span <= fov_arcmin { return format!("   fits {}", label); }
+    }
+    format!("   narrower than any common target")
+}
+
+/// Categorise an exit pupil. Boundary thresholds come from the standard
+/// "max useful pupil = ~7mm dark adapted" / "loss of contrast above
+/// pupil" / "image too dim below ~0.5mm" rules of thumb.
+fn pupil_quality(p: f64) -> (&'static str, u8) {
+    if p > 7.0       { ("wider than dark-adapted eye → wasted light", 208) }
+    else if p > 5.0  { ("dark-sky deep-field range", 46) }
+    else if p > 2.0  { ("comfortable bright-target pupil", 46) }
+    else if p > 0.7  { ("high-power planetary / lunar", 117) }
+    else if p > 0.4  { ("getting dim — stable atmosphere needed", 220) }
+    else if p > 0.0  { ("too dim — image breaks down", 196) }
+    else             { ("—", 245) }
 }
 
 fn csv_escape(s: &str) -> String {

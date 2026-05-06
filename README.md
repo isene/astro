@@ -24,6 +24,10 @@ Cross-mode `T` popup: every currently-visible body × every telescope+eyepiece c
 
 ![Tonight's gear suggestions](img/screenshot-tonight-gear.png)
 
+Gear mode with the per-combination details pane: select a telescope and eyepiece and see magnification (with % of max-useful and a zone label), true FOV (with framing against Andromeda / Pleiades / Beehive / Orion Nebula / Moon / Jupiter / Mars), exit pupil with its eye-physiology category, the closest recommended target type, 2× Barlow yields, and notes pulled from the equipment record:
+
+![Gear mode + scope × EP combo pane](img/screenshot-gear-combo.png)
+
 ## Quick start
 
 ```bash

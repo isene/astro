@@ -95,3 +95,23 @@ pub fn pupl(app: f64, tfl: f64, epfl: f64) -> f64 {
     let m = magx(tfl, epfl);
     if m == 0.0 { 0.0 } else { app / m }
 }
+
+/// Per-eyepiece target-class suitability for one scope. Returns
+/// `[*FLD, GLXY, PLNT, DBL*, >2*<]` booleans, mutually exclusive
+/// across the exit-pupil ladder borrowed from Ruby telescope:
+///   *FLD : exit pupil > 6     mm  (rich star fields)
+///   GLXY : exit pupil 3-6     mm  (galaxies, nebulae)
+///   PLNT : exit pupil 1.5-3   mm  (planets)
+///   DBL* : exit pupil 1-1.5   mm  (doubles)
+///   >2*< : exit pupil < 1     mm  (tight doubles, splitting)
+pub fn ep_suitability(app: f64, tfl: f64, epfl: f64) -> [bool; 5] {
+    if app <= 0.0 || epfl <= 0.0 || tfl <= 0.0 { return [false; 5]; }
+    let p = pupl(app, tfl, epfl);
+    [
+        p > 6.0,
+        p > 3.0  && p <= 6.0,
+        p > 1.5  && p <= 3.0,
+        p >= 1.0 && p <= 1.5,
+        p < 1.0,
+    ]
+}

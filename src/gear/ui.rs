@@ -3,7 +3,15 @@ use super::optics;
 
 use crust::{Crust, Input, Pane};
 use crust::style;
-use data::{Config, Eyepiece, Store, Telescope};
+use data::{Config, Eyepiece, MiscEquipment, Store, Telescope};
+
+/// Top pane shows at most this many scope rows; a typical observer
+/// has 1-3 scopes anyway and the freed vertical space goes to the
+/// new Misc pane (barlows, filters, …).
+const TS_VISIBLE_ROWS: u16 = 7;
+/// Misc pane shows this many rows of equipment beneath the EP/combo
+/// row. Header takes one extra line.
+const MISC_VISIBLE_ROWS: u16 = 5;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -46,6 +54,7 @@ pub fn run(env: super::SkyEnv) -> bool {
             "?" => app.show_help(),
             "t" => { app.add_telescope(); app.render_all(); }
             "e" => { app.add_eyepiece(); app.render_all(); }
+            "m" => { app.add_misc(); app.render_all(); }
             "ENTER" => { app.edit_selected(); app.render_all(); }
             "TAB" => { app.toggle_focus(); app.render_all(); }
             "j" | "DOWN" => { app.move_down(); app.render_all(); }
@@ -75,7 +84,7 @@ pub fn run(env: super::SkyEnv) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Focus { Ts, Ep }
+enum Focus { Ts, Ep, Misc }
 
 struct App {
     cfg: Config,
@@ -89,12 +98,16 @@ struct App {
     ep: Pane,
     combo_head: Pane,
     combo: Pane,
+    misc_head: Pane,
+    misc: Pane,
     footer: Pane,
     focus: Focus,
     ts_idx: usize,
     ep_idx: usize,
+    misc_idx: usize,
     ts_tagged: Vec<bool>,
     ep_tagged: Vec<bool>,
+    misc_tagged: Vec<bool>,
     sort_on: bool,
     status: Option<(String, u8)>,
     /// Snapshot of Sky-mode state at mode-switch time. Drives the
@@ -107,15 +120,18 @@ impl App {
         let (cols, rows) = Crust::terminal_size();
         let ts_tagged = vec![false; store.telescopes.len()];
         let ep_tagged = vec![false; store.eyepieces.len()];
+        let misc_tagged = vec![false; store.misc.len()];
         let panes = Self::build_panes(cols, rows, &cfg);
         Self {
             cfg, store, cols, rows,
             header: panes.0, ts_head: panes.1, ts: panes.2,
             ep_head: panes.3, ep: panes.4,
             combo_head: panes.5, combo: panes.6,
-            footer: panes.7,
+            misc_head: panes.7, misc: panes.8,
+            footer: panes.9,
             focus: Focus::Ts,
-            ts_idx: 0, ep_idx: 0, ts_tagged, ep_tagged,
+            ts_idx: 0, ep_idx: 0, misc_idx: 0,
+            ts_tagged, ep_tagged, misc_tagged,
             sort_on: false,
             status: None,
             env: super::SkyEnv::default(),
@@ -123,38 +139,66 @@ impl App {
     }
 
     fn build_panes(cols: u16, rows: u16, cfg: &Config)
-        -> (Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane)
+        -> (Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane)
     {
-        let half = rows / 2;
         let ts_bg = hex_to_256(&cfg.ts_header_bg);
         let ep_bg = hex_to_256(&cfg.ep_header_bg);
 
-        // Bottom half splits horizontally: EP list on the left, scope×EP
-        // combo details on the right. EP rows are 80 cols wide (2 cursor
-        // + 36 name + 7+6+7+6+6+8 numerics + a 2-col gutter), so the
-        // combo pane gets everything past col 80. Below 130 cols total
-        // we collapse the combo pane and let the EP list sprawl.
-        let ep_w: u16 = if cols >= 130 { 80 } else { cols };
+        // Vertical layout, top to bottom:
+        //   row 1                header (1)
+        //   row 2                ts_head (1)
+        //   rows 3..3+ts_h       ts (TS_VISIBLE_ROWS rows)
+        //   row 3+ts_h           ep_head (1)
+        //   rows 4+ts_h..R       ep + combo (the rest of the middle)
+        //   row R+1              misc_head (1)
+        //   rows R+2..rows-1     misc (MISC_VISIBLE_ROWS rows)
+        //   row rows             footer (1)
+        // Tiny terminals (< 22 rows) collapse misc entirely.
+        let ts_h = TS_VISIBLE_ROWS;
+        let chrome = 1 + 1 + ts_h + 1 + 1 + 1; // header+ts_head+ts+ep_head+misc_head+footer
+        let total_left = rows.saturating_sub(chrome);
+        let (ep_h, misc_h) = if rows >= 22 {
+            (total_left.saturating_sub(MISC_VISIBLE_ROWS).max(3), MISC_VISIBLE_ROWS)
+        } else {
+            (total_left, 0)
+        };
+
+        // EP pane is 110 cols wide on a wide terminal, with the combo
+        // detail pane on the right. Below 130 cols, EP takes full
+        // width and combo collapses (the suitability tail is the
+        // first to clip on narrow terminals).
+        let ep_w: u16 = if cols >= 130 { 110.min(cols) } else { cols };
         let combo_w: u16 = cols.saturating_sub(ep_w);
 
         let mut header = Pane::new(1, 1, cols, 1, 255, 236);
         header.wrap = false;
         let mut ts_head = Pane::new(1, 2, cols, 1, 255, ts_bg);
         ts_head.wrap = false;
-        let mut ts = Pane::new(1, 3, cols, half.saturating_sub(3), cfg.text_color, 0);
+        let mut ts = Pane::new(1, 3, cols, ts_h, cfg.text_color, 0);
         ts.wrap = false;
-        let mut ep_head = Pane::new(1, half, ep_w, 1, 255, ep_bg);
+
+        let ep_head_y = 3 + ts_h;
+        let ep_y = ep_head_y + 1;
+        let mut ep_head = Pane::new(1, ep_head_y, ep_w, 1, 255, ep_bg);
         ep_head.wrap = false;
-        let mut ep = Pane::new(1, half + 1, ep_w, rows.saturating_sub(half + 1), cfg.text_color, 0);
+        let mut ep = Pane::new(1, ep_y, ep_w, ep_h, cfg.text_color, 0);
         ep.wrap = false;
-        let mut combo_head = Pane::new(ep_w + 1, half, combo_w.max(1), 1, 255, ep_bg);
+        let mut combo_head = Pane::new(ep_w + 1, ep_head_y, combo_w.max(1), 1, 255, ep_bg);
         combo_head.wrap = false;
-        let mut combo = Pane::new(ep_w + 1, half + 1, combo_w.max(1),
-                                  rows.saturating_sub(half + 1), cfg.text_color, 0);
+        let mut combo = Pane::new(ep_w + 1, ep_y, combo_w.max(1), ep_h, cfg.text_color, 0);
         combo.wrap = true;
+
+        let misc_head_y = ep_y + ep_h;
+        let misc_y = misc_head_y + 1;
+        let misc_h_eff = misc_h.max(1); // crust requires ≥1 row
+        let mut misc_head = Pane::new(1, misc_head_y, cols, 1, 255, ts_bg);
+        misc_head.wrap = false;
+        let mut misc = Pane::new(1, misc_y, cols, misc_h_eff, cfg.text_color, 0);
+        misc.wrap = false;
+
         let mut footer = Pane::new(1, rows, cols, 1, 255, 236);
         footer.wrap = false;
-        (header, ts_head, ts, ep_head, ep, combo_head, combo, footer)
+        (header, ts_head, ts, ep_head, ep, combo_head, combo, misc_head, misc, footer)
     }
 
     fn render_all(&mut self) {
@@ -165,18 +209,25 @@ impl App {
         self.render_ep();
         self.render_combo_head();
         self.render_combo();
+        self.render_misc_head();
+        self.render_misc();
         self.render_footer();
     }
 
     fn render_header(&mut self) {
-        let focus = if self.focus == Focus::Ts { "Telescopes" } else { "Eyepieces" };
+        let focus = match self.focus {
+            Focus::Ts => "Telescopes",
+            Focus::Ep => "Eyepieces",
+            Focus::Misc => "Misc",
+        };
         let ts_tag = self.ts_tagged.iter().filter(|b| **b).count();
         let ep_tag = self.ep_tagged.iter().filter(|b| **b).count();
+        let misc_tag = self.misc_tagged.iter().filter(|b| **b).count();
         let bortle_note = if self.env.bortle > 0.0 {
             format!("   <MGN @ Bortle {:.0}", self.env.bortle)
         } else { String::new() };
-        let left = format!(" astro v{} [Gear]   [{}]   TS tagged: {}   EP tagged: {}   sort: {}{}",
-            VERSION, focus, ts_tag, ep_tag,
+        let left = format!(" astro v{} [Gear]   [{}]   TS: {}   EP: {}   Misc: {}   sort: {}{}",
+            VERSION, focus, ts_tag, ep_tag, misc_tag,
             if self.sort_on { "on" } else { "off" }, bortle_note);
         self.header.say(&style::bold(&left));
     }
@@ -247,10 +298,14 @@ impl App {
     }
 
     fn render_ep_head(&mut self) {
-        // Match the data row: name(36) + FL(7) + AFOV(6) + MAGX(7) + TFOV(6) + PPL(6) + 2BLW(8)
+        // Match the data row: name(36) + FL(7) + AFOV(6) + MAGX(7) +
+        // TFOV(6) + PPL(6) + 2BLW(8) + suitability(*FLD/GLXY/PLNT/DBL*/>2*<)
+        // at widths 7/6/6/6/6 — same as the TS row's recommended-EP
+        // columns so the eye reads down both panes consistently.
         let line = format!(
-            "  {:<36}{:>7}{:>6}{:>7}{:>6}{:>6}{:>8}",
+            "  {:<36}{:>7}{:>6}{:>7}{:>6}{:>6}{:>8}{:>7}{:>6}{:>6}{:>6}{:>6}",
             "Eyepiece", "FL", "AFOV", "MAGX", "TFOV", "PPL", "2BLW",
+            "*FLD", "GLXY", "PLNT", "DBL*", ">2*<",
         );
         self.ep_head.say(&style::bold(&line));
     }
@@ -287,7 +342,18 @@ impl App {
                 truncate_or_pad(&e.name, 36), e.fl, e.afov,
                 magx, tfov, ppl, barlow,
             );
-            let row = format!("{}{}{}", cursor, tag, body);
+            // Per-EP target-class suitability ladder: ✓ in the column
+            // whose exit-pupil bucket this EP falls into for the
+            // currently-selected scope, dim "·" elsewhere. With no
+            // scope selected, all cells stay dim.
+            let suit_str = match ts.as_ref() {
+                Some(t) => {
+                    let cells = optics::ep_suitability(t.app, t.tfl, e.fl);
+                    suit_row(&cells, self.cfg.check_good as u8)
+                }
+                None => suit_row(&[false; 5], self.cfg.check_good as u8),
+            };
+            let row = format!("{}{}{}{}", cursor, tag, body, suit_str);
             let line = if focused {
                 style::bg(&row, self.cfg.cursor_bg as u8)
             } else {
@@ -402,7 +468,7 @@ impl App {
         if let Some((ref msg, color)) = self.status {
             self.footer.say(&style::fg(msg, color));
         } else {
-            let hint = " t:+TS  e:+EP  ENTER:Edit  TAB:Focus  SPACE:Tag  o:Sort  C-o:Log  x/X:Export  D:Del  r:Redraw  ?:Help  q:Quit";
+            let hint = " t:+TS  e:+EP  m:+Misc  ENTER:Edit  TAB:Focus  SPACE:Tag  o:Sort  C-o:Log  x/X:Export  D:Del  ?:Help  q:Quit";
             self.footer.say(&style::fg(hint, 245));
         }
     }
@@ -445,8 +511,57 @@ impl App {
         self.current_ep_orig_idx().and_then(|i| self.store.eyepieces.get(i))
     }
 
+    fn render_misc_head(&mut self) {
+        if self.misc.h == 0 { return; }
+        let line = format!(
+            "  {:<28}{:<14}{:>8}    {}",
+            "Equipment", "Kind", "Factor", "Notes",
+        );
+        self.misc_head.say(&style::bold(&line));
+    }
+
+    fn render_misc(&mut self) {
+        if self.misc.h == 0 { return; }
+        let mut lines: Vec<String> = Vec::new();
+        for (i, m) in self.store.misc.iter().enumerate() {
+            let tagged = *self.misc_tagged.get(i).unwrap_or(&false);
+            let focused = self.focus == Focus::Misc && i == self.misc_idx;
+            let cursor = if focused { "\u{2192}" } else { " " };
+            let tag = if tagged {
+                style::bold(&style::fg("\u{2590}", self.cfg.tag_color as u8))
+            } else {
+                " ".to_string()
+            };
+            let factor = if m.factor > 0.0 { format!("{:.2}x", m.factor) } else { "-".into() };
+            let notes = truncate_or_pad(&m.notes, 60);
+            let body = format!(
+                "{:<28}{:<14}{:>8}    {}",
+                truncate_or_pad(&m.name, 28),
+                truncate_or_pad(&m.kind, 14),
+                factor,
+                notes,
+            );
+            let row = format!("{}{}{}", cursor, tag, body);
+            let line = if focused {
+                style::bg(&row, self.cfg.cursor_bg as u8)
+            } else { row };
+            lines.push(line);
+        }
+        if lines.is_empty() {
+            lines.push(style::fg("  (no misc equipment - press 'm' to add: barlows, filters, diagonals…)", 245));
+        }
+        self.misc.set_text(&lines.join("\n"));
+        self.misc.ix = scroll_offset(self.misc_idx, lines.len(), self.misc.h as usize);
+        self.misc.full_refresh();
+    }
+
     fn toggle_focus(&mut self) {
-        self.focus = if self.focus == Focus::Ts { Focus::Ep } else { Focus::Ts };
+        // Cycle Ts → Ep → Misc → Ts.
+        self.focus = match self.focus {
+            Focus::Ts => Focus::Ep,
+            Focus::Ep => Focus::Misc,
+            Focus::Misc => Focus::Ts,
+        };
     }
     fn move_down(&mut self) {
         match self.focus {
@@ -456,16 +571,19 @@ impl App {
             Focus::Ep => {
                 if self.ep_idx + 1 < self.store.eyepieces.len() { self.ep_idx += 1; }
             }
+            Focus::Misc => {
+                if self.misc_idx + 1 < self.store.misc.len() { self.misc_idx += 1; }
+            }
         }
     }
     fn move_up(&mut self) {
         match self.focus {
             Focus::Ts => { if self.ts_idx > 0 { self.ts_idx -= 1; } }
             Focus::Ep => { if self.ep_idx > 0 { self.ep_idx -= 1; } }
+            Focus::Misc => { if self.misc_idx > 0 { self.misc_idx -= 1; } }
         }
     }
     fn shift_up(&mut self) {
-        // Reorders the underlying Vec when sort is off.
         if self.sort_on { return; }
         match self.focus {
             Focus::Ts => {
@@ -480,6 +598,13 @@ impl App {
                     self.store.eyepieces.swap(self.ep_idx, self.ep_idx - 1);
                     self.ep_tagged.swap(self.ep_idx, self.ep_idx - 1);
                     self.ep_idx -= 1;
+                }
+            }
+            Focus::Misc => {
+                if self.misc_idx > 0 {
+                    self.store.misc.swap(self.misc_idx, self.misc_idx - 1);
+                    self.misc_tagged.swap(self.misc_idx, self.misc_idx - 1);
+                    self.misc_idx -= 1;
                 }
             }
         }
@@ -501,15 +626,27 @@ impl App {
                     self.ep_idx += 1;
                 }
             }
+            Focus::Misc => {
+                if self.misc_idx + 1 < self.store.misc.len() {
+                    self.store.misc.swap(self.misc_idx, self.misc_idx + 1);
+                    self.misc_tagged.swap(self.misc_idx, self.misc_idx + 1);
+                    self.misc_idx += 1;
+                }
+            }
         }
     }
     fn go_first(&mut self) {
-        match self.focus { Focus::Ts => self.ts_idx = 0, Focus::Ep => self.ep_idx = 0 }
+        match self.focus {
+            Focus::Ts => self.ts_idx = 0,
+            Focus::Ep => self.ep_idx = 0,
+            Focus::Misc => self.misc_idx = 0,
+        }
     }
     fn go_last(&mut self) {
         match self.focus {
             Focus::Ts => self.ts_idx = self.store.telescopes.len().saturating_sub(1),
             Focus::Ep => self.ep_idx = self.store.eyepieces.len().saturating_sub(1),
+            Focus::Misc => self.misc_idx = self.store.misc.len().saturating_sub(1),
         }
     }
     fn toggle_tag(&mut self) {
@@ -524,17 +661,24 @@ impl App {
                     if i < self.ep_tagged.len() { self.ep_tagged[i] = !self.ep_tagged[i]; }
                 }
             }
+            Focus::Misc => {
+                if self.misc_idx < self.misc_tagged.len() {
+                    self.misc_tagged[self.misc_idx] = !self.misc_tagged[self.misc_idx];
+                }
+            }
         }
     }
     fn tag_all(&mut self) {
         match self.focus {
             Focus::Ts => self.ts_tagged.iter_mut().for_each(|b| *b = true),
             Focus::Ep => self.ep_tagged.iter_mut().for_each(|b| *b = true),
+            Focus::Misc => self.misc_tagged.iter_mut().for_each(|b| *b = true),
         }
     }
     fn untag_all(&mut self) {
         self.ts_tagged.iter_mut().for_each(|b| *b = false);
         self.ep_tagged.iter_mut().for_each(|b| *b = false);
+        self.misc_tagged.iter_mut().for_each(|b| *b = false);
     }
     fn toggle_sort(&mut self) {
         self.sort_on = !self.sort_on;
@@ -576,6 +720,28 @@ impl App {
         self.status_say(" Eyepiece added", 46);
     }
 
+    /// Add miscellaneous gear: barlow, focal reducer, filter, diagonal,
+    /// finder, etc. Format is `name,kind[,factor][,notes]`. The factor
+    /// applies to magnification multipliers (barlow 2x, reducer 0.5x);
+    /// leave it empty or 0 for filters / diagonals / finders.
+    fn add_misc(&mut self) {
+        let input = self.footer.ask(" Misc (name,kind[,factor][,notes]): ", "");
+        let parts: Vec<&str> = input.splitn(4, ',').map(|s| s.trim()).collect();
+        if parts.len() < 2 {
+            self.status_say(" Need at least: name,kind", 196);
+            return;
+        }
+        let name = parts[0].to_string();
+        if name.is_empty() { self.status_say(" Name required", 196); return; }
+        let kind = parts[1].to_string();
+        // factor is optional; non-numeric or absent → 0 (no multiplier)
+        let factor: f64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let notes = parts.get(3).unwrap_or(&"").to_string();
+        self.store.misc.push(MiscEquipment { name, kind, factor, notes });
+        self.misc_tagged.push(false);
+        self.status_say(" Misc added", 46);
+    }
+
     fn edit_selected(&mut self) {
         match self.focus {
             Focus::Ts => {
@@ -610,6 +776,24 @@ impl App {
                     };
                 }
             }
+            Focus::Misc => {
+                if self.misc_idx >= self.store.misc.len() { return; }
+                let m = self.store.misc[self.misc_idx].clone();
+                let initial = format!("{},{},{}{}",
+                    m.name, m.kind,
+                    if m.factor > 0.0 { m.factor.to_string() } else { String::new() },
+                    if m.notes.is_empty() { String::new() } else { format!(",{}", m.notes) });
+                let input = self.footer.ask(" Edit misc (name,kind[,factor][,notes]): ", &initial);
+                let parts: Vec<&str> = input.splitn(4, ',').map(|s| s.trim()).collect();
+                if parts.len() < 2 { return; }
+                let factor: f64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                self.store.misc[self.misc_idx] = MiscEquipment {
+                    name: parts[0].to_string(),
+                    kind: parts[1].to_string(),
+                    factor,
+                    notes: parts.get(3).unwrap_or(&"").to_string(),
+                };
+            }
         }
     }
 
@@ -632,6 +816,15 @@ impl App {
                     if i < self.ep_tagged.len() { self.ep_tagged.remove(i); }
                     if self.ep_idx >= self.store.eyepieces.len() {
                         self.ep_idx = self.store.eyepieces.len().saturating_sub(1);
+                    }
+                }
+            }
+            Focus::Misc => {
+                if self.misc_idx < self.store.misc.len() {
+                    self.store.misc.remove(self.misc_idx);
+                    if self.misc_idx < self.misc_tagged.len() { self.misc_tagged.remove(self.misc_idx); }
+                    if self.misc_idx >= self.store.misc.len() {
+                        self.misc_idx = self.store.misc.len().saturating_sub(1);
                     }
                 }
             }
@@ -706,6 +899,9 @@ impl App {
         let tagged_ep: Vec<&Eyepiece> = self.store.eyepieces.iter().enumerate()
             .filter(|(i, _)| *self.ep_tagged.get(*i).unwrap_or(&false))
             .map(|(_, e)| e).collect();
+        let tagged_misc: Vec<&MiscEquipment> = self.store.misc.iter().enumerate()
+            .filter(|(i, _)| *self.misc_tagged.get(*i).unwrap_or(&false))
+            .map(|(_, m)| m).collect();
         if !tagged_ts.is_empty() {
             out.push_str("## Telescope(s)\n\n");
             for t in &tagged_ts {
@@ -723,6 +919,15 @@ impl App {
             }
             out.push('\n');
         }
+        if !tagged_misc.is_empty() {
+            out.push_str("## Other equipment\n\n");
+            for m in &tagged_misc {
+                let factor = if m.factor > 0.0 { format!(" ×{:.2}", m.factor) } else { String::new() };
+                out.push_str(&format!("- **{}** ({}{})\n", m.name, m.kind, factor));
+                if !m.notes.is_empty() { out.push_str(&format!("  {}\n", m.notes)); }
+            }
+            out.push('\n');
+        }
         if !tagged_ts.is_empty() && !tagged_ep.is_empty() {
             out.push_str("## Combinations\n\n| Telescope | Eyepiece | MAGX | TFOV° | Pupil mm |\n|---|---|---|---|---|\n");
             for t in &tagged_ts {
@@ -737,6 +942,22 @@ impl App {
             }
             out.push('\n');
         }
+
+        // Tonight's best deep-sky targets — small built-in catalog of
+        // staple DSOs with their best months. Filtered by the current
+        // month and (very loosely) by aperture if the user has tagged
+        // any scope, so a 60mm refractor doesn't get told to chase a
+        // 13.0-mag galaxy.
+        let max_app = tagged_ts.iter().map(|t| t.app).fold(0.0f64, f64::max);
+        let suggestions = dso_suggestions(current_month(), max_app);
+        if !suggestions.is_empty() {
+            out.push_str("## Tonight's deep-sky targets\n\n");
+            for s in &suggestions {
+                out.push_str(&format!("- **{}** ({}) — {}\n", s.name, s.kind, s.notes));
+            }
+            out.push('\n');
+        }
+
         out.push_str("## Observations\n\n_Fill in your notes here._\n");
         match std::fs::write(path.trim(), out) {
             Ok(_) => self.status_say(&format!(" Log written to {}", path.trim()), 46),
@@ -758,13 +979,16 @@ impl App {
             CATALOG\n  \
               t            Add telescope (name, aperture mm, focal length mm[, notes])\n  \
               e            Add eyepiece  (name, focal length mm, AFOV°[, notes])\n  \
+              m            Add misc gear (name, kind[, factor][, notes])\n  \
+                           kind = barlow/reducer/filter/diagonal/finder/…\n  \
+                           factor = magnification multiplier (2.0 for 2× barlow)\n  \
               ENTER        Edit selected\n  \
               D            Delete selected\n\n  \
             NAVIGATION\n  \
               UP / DOWN, k / j      Move cursor\n  \
               Shift-UP / Shift-DOWN Reorder\n  \
               HOME / END            Jump to start / end\n  \
-              TAB                   Switch panel (telescope ↔ eyepiece)\n  \
+              TAB                   Cycle panes (Telescope → Eyepiece → Misc)\n  \
               o                     Toggle sort (APP / FL)\n\n  \
             TAGS & EXPORT\n  \
               SPACE        Tag / untag\n  \
@@ -796,6 +1020,8 @@ impl App {
         self.ep.full_refresh();
         self.combo_head.full_refresh();
         self.combo.full_refresh();
+        self.misc_head.full_refresh();
+        self.misc.full_refresh();
         self.footer.full_refresh();
         self.render_all();
     }
@@ -810,6 +1036,27 @@ fn truncate_or_pad(s: &str, n: usize) -> String {
     let cc = s.chars().count();
     if cc <= n { s.to_string() }
     else { format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>()) }
+}
+
+/// Render the 5-column target-suitability ladder. Cell widths mirror
+/// the TS row's recommended-EP columns (7, 6, 6, 6, 6). The active
+/// bucket gets a green ✓; others get a dim "·". Padding is plain
+/// spaces (no ANSI), so the leading whitespace measures correctly
+/// inside the row layout.
+fn suit_row(cells: &[bool; 5], good_color: u8) -> String {
+    const WIDTHS: [usize; 5] = [7, 6, 6, 6, 6];
+    let mut out = String::new();
+    for (i, ok) in cells.iter().enumerate() {
+        let pad = WIDTHS[i].saturating_sub(1); // glyph is 1 visible col
+        out.push_str(&" ".repeat(pad));
+        let glyph = if *ok {
+            style::bold(&style::fg("\u{2713}", good_color))
+        } else {
+            style::fg("\u{00B7}", 240)
+        };
+        out.push_str(&glyph);
+    }
+    out
 }
 
 /// Match the user's eyepiece focal length against the five recommended
@@ -896,6 +1143,18 @@ fn hex_to_256(hex: &str) -> u16 {
 }
 
 fn chrono_date() -> String {
+    let (y, m, d) = ymd_now();
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+fn current_month() -> u32 {
+    ymd_now().1 as u32
+}
+
+/// Civil-from-days algorithm (Howard Hinnant). Returns (year, month, day)
+/// in UTC. Good enough for "what month is it" — the exact local-midnight
+/// boundary doesn't matter for picking DSO targets.
+fn ymd_now() -> (i64, i64, i64) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -911,5 +1170,99 @@ fn chrono_date() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02}", y, m, d)
+    (y, m, d)
+}
+
+/// One row of the built-in deep-sky catalog. `best_months` is a bitmap of
+/// the months when the object is well-placed for evening observers in
+/// the northern mid-latitudes (1=Jan … 12=Dec). `min_app` is a soft
+/// gate: if the user has tagged any telescope smaller than this, we
+/// assume they're not going to enjoy chasing the object.
+struct Dso {
+    name: &'static str,
+    kind: &'static str,
+    best_months: &'static [u32],
+    min_app: f64,
+    notes: &'static str,
+}
+
+/// Hand-curated short list of crowd-pleasers — bright Messiers, a few
+/// big NGCs and one comet-style staple per season. The point is "good
+/// list to skim before going outside", not a Burnham's replacement.
+const DSO_CATALOG: &[Dso] = &[
+    // Winter
+    Dso { name: "M42 (Orion Nebula)", kind: "emission nebula",
+        best_months: &[11,12,1,2,3], min_app: 0.0,
+        notes: "naked-eye, spectacular at any aperture" },
+    Dso { name: "M45 (Pleiades)", kind: "open cluster",
+        best_months: &[10,11,12,1,2], min_app: 0.0,
+        notes: "best at very low power, big TFOV" },
+    Dso { name: "M1 (Crab Nebula)", kind: "supernova remnant",
+        best_months: &[11,12,1,2,3], min_app: 80.0,
+        notes: "faint smudge in 80mm; UHC filter helps" },
+    Dso { name: "M35", kind: "open cluster",
+        best_months: &[12,1,2,3], min_app: 0.0,
+        notes: "rich Gemini cluster; NGC 2158 nearby" },
+    Dso { name: "M37 / M36 / M38", kind: "open clusters",
+        best_months: &[11,12,1,2,3], min_app: 0.0,
+        notes: "Auriga trio, all in one short hop" },
+    // Spring
+    Dso { name: "M81 / M82 (Bode's pair)", kind: "galaxies",
+        best_months: &[2,3,4,5,6], min_app: 80.0,
+        notes: "easy in 80mm, great contrast pair" },
+    Dso { name: "M51 (Whirlpool)", kind: "galaxy",
+        best_months: &[3,4,5,6,7], min_app: 100.0,
+        notes: "spiral arms hint from 150mm, dark sky required" },
+    Dso { name: "M3", kind: "globular cluster",
+        best_months: &[3,4,5,6,7], min_app: 60.0,
+        notes: "resolves into stars from 100mm" },
+    Dso { name: "M13 (Hercules)", kind: "globular cluster",
+        best_months: &[4,5,6,7,8,9], min_app: 60.0,
+        notes: "showpiece globular, splits at 150mm" },
+    Dso { name: "M44 (Beehive)", kind: "open cluster",
+        best_months: &[1,2,3,4,5], min_app: 0.0,
+        notes: "binoculars or low-power EP only" },
+    // Summer
+    Dso { name: "M57 (Ring)", kind: "planetary nebula",
+        best_months: &[6,7,8,9,10], min_app: 80.0,
+        notes: "tiny but obvious ring; punch up the magnification" },
+    Dso { name: "M27 (Dumbbell)", kind: "planetary nebula",
+        best_months: &[7,8,9,10], min_app: 60.0,
+        notes: "bright, big, easy — UHC darkens the sky around it" },
+    Dso { name: "M22", kind: "globular cluster",
+        best_months: &[6,7,8,9], min_app: 60.0,
+        notes: "Sagittarius globular, often outshines M13" },
+    Dso { name: "M8 (Lagoon)", kind: "emission nebula",
+        best_months: &[6,7,8,9], min_app: 0.0,
+        notes: "binocular target, complex with low power + filter" },
+    Dso { name: "M11 (Wild Duck)", kind: "open cluster",
+        best_months: &[6,7,8,9,10], min_app: 0.0,
+        notes: "dense, almost globular-looking cluster" },
+    // Autumn
+    Dso { name: "M31 (Andromeda)", kind: "galaxy",
+        best_months: &[8,9,10,11,12,1], min_app: 0.0,
+        notes: "naked-eye core, full disk needs binoculars" },
+    Dso { name: "M33 (Triangulum)", kind: "galaxy",
+        best_months: &[9,10,11,12,1], min_app: 80.0,
+        notes: "low surface brightness — wide field, dark sky" },
+    Dso { name: "NGC 869 / NGC 884 (Double Cluster)", kind: "open clusters",
+        best_months: &[8,9,10,11,12,1], min_app: 0.0,
+        notes: "naked-eye in dark skies, spectacular at low power" },
+    Dso { name: "M15", kind: "globular cluster",
+        best_months: &[8,9,10,11], min_app: 60.0,
+        notes: "compact, dense Pegasus globular" },
+    Dso { name: "M2", kind: "globular cluster",
+        best_months: &[8,9,10,11], min_app: 60.0,
+        notes: "slightly looser than M15, same Aquarius region" },
+];
+
+/// Pick suggestions whose best-month list contains `month` and whose
+/// `min_app` is satisfied by the largest tagged scope. With no scope
+/// tagged (`max_app` = 0), we drop the aperture filter entirely so the
+/// log is still useful.
+fn dso_suggestions(month: u32, max_app: f64) -> Vec<&'static Dso> {
+    DSO_CATALOG.iter()
+        .filter(|d| d.best_months.contains(&month))
+        .filter(|d| max_app == 0.0 || max_app >= d.min_app)
+        .collect()
 }

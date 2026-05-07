@@ -28,12 +28,29 @@ pub struct Eyepiece {
     pub notes: String,
 }
 
+/// Catch-all for the gear that isn't a scope or an eyepiece:
+/// barlow lenses, focal reducers, filters, diagonals, finders, etc.
+/// `kind` is a free-text tag the user picks ("barlow", "filter",
+/// "diagonal", …); `factor` carries the magnification multiplier
+/// for a barlow / reducer (0.0 when not applicable).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct MiscEquipment {
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub factor: f64,
+    #[serde(default)]
+    pub notes: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Store {
     #[serde(default)]
     pub telescopes: Vec<Telescope>,
     #[serde(default)]
     pub eyepieces: Vec<Eyepiece>,
+    #[serde(default)]
+    pub misc: Vec<MiscEquipment>,
 }
 
 impl Store {

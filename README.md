@@ -61,9 +61,35 @@ Plan your observations with weather, ephemeris, and events.
 
 ## Gear mode
 
-Catalog telescopes and eyepieces. Astro computes focal ratio, magnitude limit, min/max magnification, separation limits, recommended eyepiece focal lengths for different targets, exit pupil, true field of view, and more. Tag combinations to build observation logs.
+Catalog telescopes, eyepieces, and miscellaneous equipment (barlows, focal reducers, filters, diagonals, finders). Astro computes focal ratio, magnitude limit, min/max magnification, separation limits, recommended eyepiece focal lengths for different targets, exit pupil, true field of view, and more. Tag combinations to build observation logs.
 
 Press `g` from Sky mode to enter Gear mode; `g` again to flip back.
+
+### Layout
+
+Three stacked panes plus a Scope×EP combo detail to the right of the Eyepieces pane:
+
+- **Telescopes** (top, max 7 rows) — your scopes. The cursor row drives the per-EP figures shown below.
+- **Eyepieces** (middle) — your EPs. Each row shows magnification, TFOV, exit pupil, and a target-class suitability ladder for the currently-selected scope.
+- **Scope × EP combo** (right of Eyepieces) — narrative details of the selected scope+EP combination: magnification with a "% of max-useful" zone label, TFOV with framing comparisons, exit-pupil quality, best-target classification, 2× Barlow yields, and any notes from the equipment record.
+- **Misc** (bottom) — barlows, focal reducers, filters, diagonals, finders, and anything else that isn't a scope or an EP.
+
+### Header info row
+
+Reading left to right:
+
+| Token | Meaning |
+|---|---|
+| `astro vX.Y.Z` | Crate version. |
+| `[Gear]` | Current mode (the other is Sky). |
+| `[Telescopes]` / `[Eyepieces]` / `[Misc]` | Currently focused pane. `TAB` cycles. |
+| `TS: N` | Number of **tagged** telescopes (not catalog count). |
+| `EP: N` | Number of **tagged** eyepieces. |
+| `Misc: N` | Number of **tagged** misc items. |
+| `sort: on/off` | Whether each list is sorted (TS by aperture, EP by focal length). Toggle with `o`. |
+| `<MGN @ Bortle N` | The Bortle-adjusted limiting magnitude in use, pulled from your Sky-mode site. |
+
+The tag counts matter because `Ctrl-O` (observation log), `x` (CSV export), and the combo table all operate on tagged items. Tagging answers "what gear am I taking out tonight"; press `SPACE` on a row to flip its tag (a green `▐` marker appears next to the cursor).
 
 ### Telescope columns
 
@@ -95,6 +121,22 @@ Press `g` from Sky mode to enter Gear mode; `g` again to flip back.
 | TFOV | True field of view (degrees) |
 | PPL | Exit pupil (mm) |
 | 2BLW | Magnification with a 2× Barlow lens |
+| *FLD | ✓ if exit pupil > 6 mm (rich star fields) |
+| GLXY | ✓ if exit pupil 3–6 mm (galaxies, nebulae) |
+| PLNT | ✓ if exit pupil 1.5–3 mm (planets, globular clusters) |
+| DBL* | ✓ if exit pupil 1–1.5 mm (doubles, planet detail) |
+| >2*< | ✓ if exit pupil < 1 mm (tight doubles, splitting) |
+
+The five suitability columns are mutually exclusive — exactly one ✓ per row, in the bucket the EP×scope combination falls into. With no scope selected, all five stay dim.
+
+### Misc equipment columns
+
+| Col | Meaning |
+|---|---|
+| Equipment | Free-text name |
+| Kind | Free-text category (`barlow`, `reducer`, `filter`, `diagonal`, `finder`, `Ha filter`, …) |
+| Factor | Magnification multiplier for barlows / reducers (e.g. `2.0` for a 2× barlow, `0.5` for a 0.5× reducer); `-` when not applicable |
+| Notes | Free-text notes |
 
 ## Cross-mode synergy
 
@@ -102,7 +144,12 @@ The merge unlocks features neither standalone app could:
 
 - **`T` in Sky mode** opens a popup listing each currently-visible body × every telescope+eyepiece combo from the Gear catalog, showing magnification, TFOV, and exit pupil. Combos that exceed the scope's useful max magnification get a `⚠`.
 - **Bortle-aware magnitude limit**: the `<MGN` column in Gear mode subtracts `(Bortle - 3) × 0.4` mag from the textbook dark-sky figure, so the displayed mag limit matches what you can actually see from your site. The applied Bortle is shown in the Gear mode header.
-- **Observation log auto-fill** (`Ctrl-O` in Gear): the generated log file is prepopulated with date, location, time, weather, moon phase, visible planets, and Bortle from the Sky-mode snapshot taken when you pressed `g`.
+- **Observation log auto-fill** (`Ctrl-O` in Gear): the generated log file is prepopulated with:
+  - date, location, time, weather, moon phase, visible planets, and Bortle from the Sky-mode snapshot taken when you pressed `g`;
+  - tagged telescopes, eyepieces, and misc gear with their notes;
+  - a combination table (MAGX / TFOV / pupil) for every tagged scope × tagged EP pair;
+  - **tonight's deep-sky targets** — month-appropriate Messier / NGC suggestions, filtered by your largest tagged aperture so a 60 mm refractor isn't pointed at a 13-mag galaxy;
+  - **solar / H-α viewing tips** — appended automatically when any tagged misc item is recognised as a solar filter (`solar`, `h-alpha`, `daystar`, `quark`, `coronado`, `lunt`, …).
 
 ## Sky-mode keys
 
@@ -140,8 +187,9 @@ The merge unlocks features neither standalone app could:
 | `g` | Back to Sky mode |
 | `t` | Add telescope (name, aperture mm, focal length mm[, notes]) |
 | `e` | Add eyepiece (name, focal length mm, AFOV°[, notes]) |
+| `m` | Add misc gear (name, kind[, factor][, notes]) |
 | `ENTER` | Edit selected |
-| `TAB` | Switch focus (telescope ↔ eyepiece) |
+| `TAB` | Cycle focus (Telescopes → Eyepieces → Misc) |
 | `UP` / `DOWN`, `k` / `j` | Move cursor |
 | `Shift-UP` / `Shift-DOWN` | Reorder |
 | `HOME` / `END` | Jump to start / end |

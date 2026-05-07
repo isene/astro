@@ -185,15 +185,20 @@ impl App {
 
         let ep_head_y = 3 + ts_h;
         let ep_y = ep_head_y + 1;
-        let mut ep_head = Pane::new(1, ep_head_y, ep_w, 1, 255, ep_bg);
+        // ep_head spans the full width so the bg is continuous across
+        // the gap and into / beyond the combo title — combo_head
+        // overlays at combo_x with the same ep_bg, leaving a single
+        // unbroken band on the title row.
+        let mut ep_head = Pane::new(1, ep_head_y, cols, 1, 255, ep_bg);
         ep_head.wrap = false;
         let mut ep = Pane::new(1, ep_y, ep_w, ep_h, cfg.text_color, 0);
         ep.wrap = false;
         // Slight border between EP and combo: a 1-col separator pane
         // sitting in the middle of the COMBO_GAP, drawn as a column of
-        // dim │ characters spanning header + body.
+        // dim │ characters across the EP body only — the title bar
+        // stays unbroken so the two header strips read as one band.
         let sep_x = ep_w + 1 + (COMBO_GAP / 2);
-        let mut combo_sep = Pane::new(sep_x, ep_head_y, 1, ep_h + 1, 240, 0);
+        let mut combo_sep = Pane::new(sep_x, ep_y, 1, ep_h, 240, 0);
         combo_sep.wrap = false;
         let mut combo_head = Pane::new(combo_x, ep_head_y, combo_w.max(1), 1, 255, ep_bg);
         combo_head.wrap = false;
@@ -392,7 +397,7 @@ impl App {
 
     fn render_combo_head(&mut self) {
         if self.combo.w <= 1 { return; }
-        self.combo_head.say(&style::bold("  Scope × EP combo"));
+        self.combo_head.say(&style::bold(" Scope × EP combo"));
     }
 
     fn render_combo(&mut self) {
@@ -400,6 +405,11 @@ impl App {
         let ts = self.current_ts().cloned();
         let ep = self.current_ep().cloned();
         let mut lines: Vec<String> = Vec::new();
+
+        // Label colour — dim grey. Values render in default fg + bold,
+        // giving a pronounced key/value contrast without clobbering
+        // the user's terminal palette.
+        const LBL: u8 = 245;
 
         match (ts, ep) {
             (Some(t), Some(e)) => {
@@ -409,8 +419,10 @@ impl App {
                 let max_useful = optics::maxx(t.app);
                 let min_useful = optics::minx(t.app, t.tfl);
 
-                lines.push(style::bold(&format!(" {}", t.name)));
-                lines.push(format!(" × {}", e.name));
+                lines.push(format!(" {}", style::bold(&t.name)));
+                lines.push(format!(" {} {}",
+                    style::fg("×", LBL),
+                    style::bold(&e.name)));
                 lines.push(String::new());
 
                 // Magnification — colour the status by zone.
@@ -426,48 +438,65 @@ impl App {
                 } else {
                     ("good", 46u8)
                 };
-                lines.push(format!(" Magnification:  {:.0}×", m));
-                lines.push(format!("   {:.0}% of max-useful ({:.0}×)   {}",
-                    m_pct_max, max_useful, style::fg(m_status, m_color)));
+                lines.push(format!(" {}  {}",
+                    style::fg("Magnification:", LBL),
+                    style::bold(&format!("{:.0}×", m))));
+                lines.push(format!("   {} {} {}",
+                    style::bold(&format!("{:.0}%", m_pct_max)),
+                    style::fg(&format!("of max ({:.0}×)", max_useful), LBL),
+                    style::fg(m_status, m_color)));
                 lines.push(String::new());
 
                 // True FOV plus framing.
                 let fov_arcmin = fov * 60.0;
-                lines.push(format!(" True FOV:       {:.2}°  ({:.0}')", fov, fov_arcmin));
+                lines.push(format!(" {}        {}  {}",
+                    style::fg("True FOV:", LBL),
+                    style::bold(&format!("{:.2}°", fov)),
+                    style::fg(&format!("({:.0}')", fov_arcmin), LBL)));
                 let moons = fov / 0.5;
-                if moons >= 1.5 {
-                    lines.push(format!("   ~{:.1} full Moons across", moons));
+                let moons_line = if moons >= 1.5 {
+                    format!("~{:.1} full Moons across", moons)
                 } else if moons >= 0.6 {
-                    lines.push(format!("   {:.0}% of full Moon", moons * 100.0));
+                    format!("{:.0}% of full Moon", moons * 100.0)
                 } else {
-                    lines.push(format!("   tight: {:.0}% of full Moon", moons * 100.0));
-                }
-                lines.push(framing_hint(fov_arcmin));
+                    format!("tight: {:.0}% of full Moon", moons * 100.0)
+                };
+                lines.push(format!("   {}", style::fg(&moons_line, LBL)));
+                lines.push(format!("   {}", style::fg(&framing_hint_text(fov_arcmin), LBL)));
                 lines.push(String::new());
 
                 // Exit pupil with eye-physiology assessment.
                 let (pq_label, pq_color) = pupil_quality(pupil);
-                lines.push(format!(" Exit pupil:     {:.2} mm", pupil));
+                lines.push(format!(" {}      {}",
+                    style::fg("Exit pupil:", LBL),
+                    style::bold(&format!("{:.2} mm", pupil))));
                 lines.push(format!("   {}", style::fg(pq_label, pq_color)));
                 lines.push(String::new());
 
                 // Best target use, matched against e_st/e_gx/e_pl/e_2s/e_t2.
-                lines.push(format!(" Best target:    {}", classify_target(t.app, t.tfl, e.fl)));
+                lines.push(format!(" {}     {}",
+                    style::fg("Best target:", LBL),
+                    style::bold(classify_target(t.app, t.tfl, e.fl))));
                 lines.push(String::new());
 
                 // 2× Barlow yields.
                 let m_b = m * 2.0;
                 let pupil_b = pupil / 2.0;
-                let barlow_q = if m_b > max_useful { " (overshoots max)" } else { "" };
-                lines.push(style::fg(" With 2× Barlow", 245));
-                lines.push(format!("   {:.0}× / pupil {:.2} mm{}", m_b, pupil_b, barlow_q));
+                let barlow_q = if m_b > max_useful { "  (overshoots max)" } else { "" };
+                lines.push(style::fg(" With 2× Barlow", LBL));
+                lines.push(format!("   {} {} {} {}{}",
+                    style::bold(&format!("{:.0}×", m_b)),
+                    style::fg("/ pupil", LBL),
+                    style::bold(&format!("{:.2}", pupil_b)),
+                    style::fg("mm", LBL),
+                    style::fg(barlow_q, 208)));
                 lines.push(String::new());
 
                 // Notes pulled straight from the equipment record so the
                 // user can leave reminders ("doesn't grip ETX-90 focuser",
                 // etc.) without leaving the gear list.
                 if !t.notes.is_empty() || !e.notes.is_empty() {
-                    lines.push(style::fg(" Notes", 245));
+                    lines.push(style::fg(" Notes", LBL));
                     if !t.notes.is_empty() {
                         lines.push(format!("   • {}", t.notes));
                     }
@@ -979,6 +1008,19 @@ impl App {
             out.push('\n');
         }
 
+        // Solar / H-α tips — fired when any tagged misc looks like a
+        // solar filter. Keeps the log self-contained when the user
+        // takes it outside in daylight, and reminds them that wide-AFOV
+        // EPs are usually wasted on the Sun's small disk.
+        let solar_tagged = tagged_misc.iter().any(|m| is_solar_kit(&m.name) || is_solar_kit(&m.kind));
+        if solar_tagged {
+            out.push_str("## Solar / H-α viewing tips\n\n");
+            for tip in solar_ep_tips() {
+                out.push_str(&format!("- {}\n", tip));
+            }
+            out.push('\n');
+        }
+
         out.push_str("## Observations\n\n_Fill in your notes here._\n");
         match std::fs::write(path.trim(), out) {
             Ok(_) => self.status_say(&format!(" Log written to {}", path.trim()), 46),
@@ -995,8 +1037,17 @@ impl App {
     fn show_help(&mut self) {
         let help = format!("\n  \
             astro v{} — Gear mode\n  \
-            Telescope and eyepiece catalog with optics calculations.\n  \
+            Telescope, eyepiece and misc catalog with optics calculations.\n  \
             Press g to flip back to Sky mode.\n\n  \
+            HEADER\n  \
+              [Pane]       Currently focused pane (Telescopes / Eyepieces / Misc)\n  \
+              TS / EP /\n  \
+              Misc         Tagged-row count per pane (NOT catalog count) —\n  \
+                           tagging selects what gets exported and what goes\n  \
+                           into the observation log.\n  \
+              <MGN @       Bortle-adjusted limiting magnitude in use, pulled\n  \
+              Bortle N     from your Sky-mode site. (Bortle - 3) × 0.4 mag\n  \
+                           subtracted from the dark-sky textbook value.\n\n  \
             CATALOG\n  \
               t            Add telescope (name, aperture mm, focal length mm[, notes])\n  \
               e            Add eyepiece  (name, focal length mm, AFOV°[, notes])\n  \
@@ -1012,12 +1063,23 @@ impl App {
               TAB                   Cycle panes (Telescope → Eyepiece → Misc)\n  \
               o                     Toggle sort (APP / FL)\n\n  \
             TAGS & EXPORT\n  \
-              SPACE        Tag / untag\n  \
-              A            Tag all\n  \
-              u            Untag all\n  \
-              Ctrl-O       Create observation log from tagged equipment\n  \
+              SPACE        Tag / untag (▐ marker appears next to the cursor)\n  \
+              A            Tag all in the focused pane\n  \
+              u            Untag all (across every pane)\n  \
+              Ctrl-O       Create observation log from tagged equipment.\n  \
+                           Auto-fills date/location/weather/Bortle from Sky\n  \
+                           mode, lists tagged scopes/EPs/misc, builds a\n  \
+                           combination table, and appends month-appropriate\n  \
+                           DSO targets. Solar / H-α tips appear when a tagged\n  \
+                           misc item looks like a solar filter.\n  \
               x            Export tagged to CSV\n  \
               X            Export all to JSON\n\n  \
+            EP SUITABILITY (in EP pane, per the selected scope)\n  \
+              *FLD  exit pupil > 6 mm    rich star fields\n  \
+              GLXY  exit pupil 3-6 mm    galaxies, nebulae\n  \
+              PLNT  exit pupil 1.5-3 mm  planets, globulars\n  \
+              DBL*  exit pupil 1-1.5 mm  doubles, planet detail\n  \
+              >2*<  exit pupil < 1 mm    tight doubles, splitting\n\n  \
             OTHER\n  \
               g            Back to Sky mode\n  \
               r            Redraw\n  \
@@ -1104,8 +1166,8 @@ fn classify_target(app: f64, tfl: f64, epfl: f64) -> &'static str {
 /// Translate true-field arcminutes into something the brain has a
 /// chance with — Andromeda, Pleiades, an Orion Nebula etc. The list
 /// is deliberately short; framing dozens of targets becomes a
-/// catalogue, not a hint.
-fn framing_hint(fov_arcmin: f64) -> String {
+/// catalogue, not a hint. Caller is responsible for indent + colour.
+fn framing_hint_text(fov_arcmin: f64) -> String {
     // (object, span in arcmin, label)
     let comps: &[(&str, f64)] = &[
         ("M31 (Andromeda) is 178'", 178.0),
@@ -1116,12 +1178,10 @@ fn framing_hint(fov_arcmin: f64) -> String {
         ("Jupiter is ~0.7'", 0.7),
         ("Mars max ~0.4'", 0.4),
     ];
-    // Pick the largest object that still fits; otherwise mention the
-    // smallest one that overflows the field as a "fits inside" comparison.
     for (label, span) in comps {
-        if *span <= fov_arcmin { return format!("   fits {}", label); }
+        if *span <= fov_arcmin { return format!("fits {}", label); }
     }
-    format!("   narrower than any common target")
+    "narrower than any common target".to_string()
 }
 
 /// Categorise an exit pupil. Boundary thresholds come from the standard
@@ -1287,4 +1347,32 @@ fn dso_suggestions(month: u32, max_app: f64) -> Vec<&'static Dso> {
         .filter(|d| d.best_months.contains(&month))
         .filter(|d| max_app == 0.0 || max_app >= d.min_app)
         .collect()
+}
+
+/// Match free-text user labels against keywords that tag a piece of
+/// gear as solar / H-α: enough that "DayStar Quark", "Lunt B600",
+/// "Coronado SolarMax", a generic "h-alpha filter" or "solar wedge"
+/// all trigger the tip block.
+fn is_solar_kit(s: &str) -> bool {
+    let l = s.to_lowercase();
+    l.contains("solar") || l.contains("h-alpha") || l.contains("h-α")
+        || l.contains("ha ") || l.starts_with("ha")
+        || l.contains("hα")
+        || l.contains("sun")
+        || l.contains("daystar") || l.contains("quark")
+        || l.contains("coronado") || l.contains("lunt")
+}
+
+/// Eyepiece-side tips for H-α / white-light solar work. Geared at the
+/// dedicated DayStar-Quark / Lunt B-series crowd; the advice still
+/// applies to a Baader film + scope combo.
+fn solar_ep_tips() -> &'static [&'static str] {
+    &[
+        "The H-α disk is small (~32'). Mid-FL eyepieces (10-15 mm) put it nicely inside the field — extreme wide-AFOV is wasted.",
+        "Plossl, orthoscopic, or simple 5-element wide-fields with good eye relief beat fancy 82°/100° EPs here.",
+        "DayStar Quark works best at f/15–f/30 — most refractors need a 2.5-3× telecentric (or barlow) ahead of the Quark.",
+        "Lunt B600 / B1200 blocking filters have their own focal length implications; check the diagonal/EP combo against the manufacturer's chart.",
+        "Stop down to 80-100 mm aperture for the Sun unless the front filter is rated for the full clear opening — daytime seeing rarely supports more anyway.",
+        "Keep a dedicated EP for solar so you can dry-store it; H-α kit hates moisture.",
+    ]
 }

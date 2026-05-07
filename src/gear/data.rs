@@ -88,7 +88,7 @@ pub struct Config {
 
 fn default_ts_bg() -> String { "006479".into() }
 fn default_ep_bg() -> String { "406100".into() }
-fn default_misc_bg() -> String { "613400".into() }
+fn default_misc_bg() -> String { "944900".into() }
 fn default_tag() -> u16 { 46 }
 fn default_cursor_bg() -> u16 { 234 }
 fn default_text() -> u16 { 248 }

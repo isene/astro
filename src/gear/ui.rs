@@ -11,7 +11,7 @@ use data::{Config, Eyepiece, MiscEquipment, Store, Telescope};
 const TS_VISIBLE_ROWS: u16 = 7;
 /// Misc pane shows this many rows of equipment beneath the EP/combo
 /// row. Header takes one extra line.
-const MISC_VISIBLE_ROWS: u16 = 5;
+const MISC_VISIBLE_ROWS: u16 = 10;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -96,6 +96,7 @@ struct App {
     ts: Pane,
     ep_head: Pane,
     ep: Pane,
+    combo_sep: Pane,
     combo_head: Pane,
     combo: Pane,
     misc_head: Pane,
@@ -126,9 +127,10 @@ impl App {
             cfg, store, cols, rows,
             header: panes.0, ts_head: panes.1, ts: panes.2,
             ep_head: panes.3, ep: panes.4,
-            combo_head: panes.5, combo: panes.6,
-            misc_head: panes.7, misc: panes.8,
-            footer: panes.9,
+            combo_sep: panes.5,
+            combo_head: panes.6, combo: panes.7,
+            misc_head: panes.8, misc: panes.9,
+            footer: panes.10,
             focus: Focus::Ts,
             ts_idx: 0, ep_idx: 0, misc_idx: 0,
             ts_tagged, ep_tagged, misc_tagged,
@@ -139,10 +141,11 @@ impl App {
     }
 
     fn build_panes(cols: u16, rows: u16, cfg: &Config)
-        -> (Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane)
+        -> (Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane, Pane)
     {
         let ts_bg = hex_to_256(&cfg.ts_header_bg);
         let ep_bg = hex_to_256(&cfg.ep_header_bg);
+        let misc_bg = hex_to_256(&cfg.misc_header_bg);
 
         // Vertical layout, top to bottom:
         //   row 1                header (1)
@@ -163,12 +166,15 @@ impl App {
             (total_left, 0)
         };
 
-        // EP pane is 110 cols wide on a wide terminal, with the combo
-        // detail pane on the right. Below 130 cols, EP takes full
-        // width and combo collapses (the suitability tail is the
-        // first to clip on narrow terminals).
+        // EP pane is 110 cols wide on a wide terminal, with a 3-col
+        // gap acting as a "slight border" before the combo detail pane
+        // on the right. Below 130 cols, EP takes full width and combo
+        // collapses (the suitability tail is the first to clip on
+        // narrow terminals).
+        const COMBO_GAP: u16 = 3;
         let ep_w: u16 = if cols >= 130 { 110.min(cols) } else { cols };
-        let combo_w: u16 = cols.saturating_sub(ep_w);
+        let combo_x: u16 = ep_w + 1 + COMBO_GAP;
+        let combo_w: u16 = cols.saturating_sub(ep_w + COMBO_GAP);
 
         let mut header = Pane::new(1, 1, cols, 1, 255, 236);
         header.wrap = false;
@@ -183,22 +189,28 @@ impl App {
         ep_head.wrap = false;
         let mut ep = Pane::new(1, ep_y, ep_w, ep_h, cfg.text_color, 0);
         ep.wrap = false;
-        let mut combo_head = Pane::new(ep_w + 1, ep_head_y, combo_w.max(1), 1, 255, ep_bg);
+        // Slight border between EP and combo: a 1-col separator pane
+        // sitting in the middle of the COMBO_GAP, drawn as a column of
+        // dim │ characters spanning header + body.
+        let sep_x = ep_w + 1 + (COMBO_GAP / 2);
+        let mut combo_sep = Pane::new(sep_x, ep_head_y, 1, ep_h + 1, 240, 0);
+        combo_sep.wrap = false;
+        let mut combo_head = Pane::new(combo_x, ep_head_y, combo_w.max(1), 1, 255, ep_bg);
         combo_head.wrap = false;
-        let mut combo = Pane::new(ep_w + 1, ep_y, combo_w.max(1), ep_h, cfg.text_color, 0);
+        let mut combo = Pane::new(combo_x, ep_y, combo_w.max(1), ep_h, cfg.text_color, 0);
         combo.wrap = true;
 
         let misc_head_y = ep_y + ep_h;
         let misc_y = misc_head_y + 1;
         let misc_h_eff = misc_h.max(1); // crust requires ≥1 row
-        let mut misc_head = Pane::new(1, misc_head_y, cols, 1, 255, ts_bg);
+        let mut misc_head = Pane::new(1, misc_head_y, cols, 1, 255, misc_bg);
         misc_head.wrap = false;
         let mut misc = Pane::new(1, misc_y, cols, misc_h_eff, cfg.text_color, 0);
         misc.wrap = false;
 
         let mut footer = Pane::new(1, rows, cols, 1, 255, 236);
         footer.wrap = false;
-        (header, ts_head, ts, ep_head, ep, combo_head, combo, misc_head, misc, footer)
+        (header, ts_head, ts, ep_head, ep, combo_sep, combo_head, combo, misc_head, misc, footer)
     }
 
     fn render_all(&mut self) {
@@ -207,11 +219,20 @@ impl App {
         self.render_ts();
         self.render_ep_head();
         self.render_ep();
+        self.render_combo_sep();
         self.render_combo_head();
         self.render_combo();
         self.render_misc_head();
         self.render_misc();
         self.render_footer();
+    }
+
+    fn render_combo_sep(&mut self) {
+        if self.combo.w <= 1 { return; }
+        let h = self.combo_sep.h as usize;
+        let line: Vec<String> = (0..h).map(|_| "\u{2502}".to_string()).collect();
+        self.combo_sep.set_text(&line.join("\n"));
+        self.combo_sep.full_refresh();
     }
 
     fn render_header(&mut self) {
@@ -1018,6 +1039,7 @@ impl App {
         self.ts.full_refresh();
         self.ep_head.full_refresh();
         self.ep.full_refresh();
+        self.combo_sep.full_refresh();
         self.combo_head.full_refresh();
         self.combo.full_refresh();
         self.misc_head.full_refresh();

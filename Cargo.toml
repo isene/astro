@@ -1,6 +1,6 @@
 [package]
 name = "astro"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["Geir Isene <g@isene.com>"]
 description = "Comprehensive amateur astronomy app: sky panel + telescope/eyepiece catalog. Merger of nova and scope. Built on crust."

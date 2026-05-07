@@ -76,6 +76,7 @@ impl Store {
 pub struct Config {
     #[serde(default = "default_ts_bg")] pub ts_header_bg: String,
     #[serde(default = "default_ep_bg")] pub ep_header_bg: String,
+    #[serde(default = "default_misc_bg")] pub misc_header_bg: String,
     #[serde(default = "default_tag")] pub tag_color: u16,
     #[serde(default = "default_cursor_bg")] pub cursor_bg: u16,
     #[serde(default = "default_text")] pub text_color: u16,
@@ -85,8 +86,9 @@ pub struct Config {
     #[serde(default = "default_backup_count")] pub backup_count: usize,
 }
 
-fn default_ts_bg() -> String { "00524b".into() }
-fn default_ep_bg() -> String { "4c3c1d".into() }
+fn default_ts_bg() -> String { "006479".into() }
+fn default_ep_bg() -> String { "406100".into() }
+fn default_misc_bg() -> String { "613400".into() }
 fn default_tag() -> u16 { 46 }
 fn default_cursor_bg() -> u16 { 234 }
 fn default_text() -> u16 { 248 }
@@ -100,6 +102,7 @@ impl Default for Config {
         Self {
             ts_header_bg: default_ts_bg(),
             ep_header_bg: default_ep_bg(),
+            misc_header_bg: default_misc_bg(),
             tag_color: default_tag(),
             cursor_bg: default_cursor_bg(),
             text_color: default_text(),

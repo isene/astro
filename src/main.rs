@@ -982,7 +982,7 @@ fn first_run_setup(mut cfg: Config) -> Config {
     use std::io::{self, BufRead, Write};
     let stdin = io::stdin();
     let mut lock = stdin.lock();
-    let mut stdout = io::stdout();
+    let stdout = io::stdout();
 
     println!("\nastro: first-run setup (press Enter to accept defaults)\n");
 

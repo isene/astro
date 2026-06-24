@@ -1,4 +1,6 @@
-/// Minimal date helpers, copied from tock. Self-contained: no external deps.
+//! Minimal date helpers, copied from tock. Self-contained: no external deps.
+//! Astro uses only a subset; the rest is kept intact as a reusable set.
+#![allow(dead_code)]
 
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()

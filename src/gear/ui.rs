@@ -89,8 +89,6 @@ enum Focus { Ts, Ep, Misc }
 struct App {
     cfg: Config,
     store: Store,
-    cols: u16,
-    rows: u16,
     header: Pane,
     ts_head: Pane,
     ts: Pane,
@@ -124,7 +122,7 @@ impl App {
         let misc_tagged = vec![false; store.misc.len()];
         let panes = Self::build_panes(cols, rows, &cfg);
         Self {
-            cfg, store, cols, rows,
+            cfg, store,
             header: panes.0, ts_head: panes.1, ts: panes.2,
             ep_head: panes.3, ep: panes.4,
             combo_sep: panes.5,

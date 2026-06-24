@@ -914,12 +914,15 @@ impl App {
     }
 
     fn create_observation_log(&mut self) {
+        // Date the user was viewing in Sky mode, falling back to today
+        // only when Gear was reached without a Sky-mode snapshot.
+        let obs_date = if self.env.date.is_empty() { chrono_date() } else { self.env.date.clone() };
         let default = format!("{}/observation_{}.md", std::env::var("HOME").unwrap_or_default(),
-            chrono_date());
+            obs_date);
         let path = self.footer.ask(" Observation log (path): ", &default);
         if path.trim().is_empty() { return; }
         let mut out = String::from("# Observation Log\n\n");
-        out.push_str(&format!("Date: {}\n", chrono_date()));
+        out.push_str(&format!("Date: {}\n", obs_date));
         // Auto-fill conditions from the Sky-mode snapshot taken when the
         // user pressed `g`. Anything missing is just omitted.
         if !self.env.location.is_empty() {

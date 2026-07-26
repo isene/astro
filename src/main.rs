@@ -776,7 +776,7 @@ impl App {
         let mut popup = crust::Popup::centered(w, h, 252, 234);
         popup.pane.fg = 252;
         popup.pane.bg = 234;
-        let _ = popup.modal(help);
+        popup.view(help);
         // Wipe the entire screen — popup border and any popup content
         // sitting in the gaps between panes (cols outside left/main_p,
         // bottom rows below footer) wouldn't be cleaned by per-pane
@@ -894,7 +894,7 @@ impl App {
         let w = cols.saturating_sub(8).min(80);
         let h_pop = rows.saturating_sub(4).min(36);
         let mut popup = crust::Popup::centered(w, h_pop, 252, 234);
-        let _ = popup.modal(&buf);
+        popup.view(&buf);
 
         Crust::clear_screen();
         self.header.full_refresh();

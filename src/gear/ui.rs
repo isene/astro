@@ -1093,7 +1093,7 @@ impl App {
         let w = cols.saturating_sub(8).min(80);
         let h = rows.saturating_sub(4).min(36);
         let mut popup = crust::Popup::centered(w, h, 252, 234);
-        let _ = popup.modal(&help);
+        popup.view(&help);
         // Wipe the screen so the popup border and any content sitting
         // in the gaps between panes is removed.
         Crust::clear_screen();

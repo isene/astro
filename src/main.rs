@@ -14,6 +14,24 @@ use std::sync::mpsc;
 use weather::{DayForecast, HourPoint};
 
 fn main() {
+    // --help and --version answer before the TUI touches the terminal.
+    // A tool that asks what this is — the fe2o3 launcher's ? popup, a
+    // packaging script, a curious shell — should get an answer, not a
+    // screen paint.
+    if std::env::args().skip(1).any(|a| a == "-h" || a == "--help") {
+        println!("astro — Amateur-astronomy companion (Fe2O3 suite)");
+        println!();
+        println!("Usage: astro");
+        println!();
+        println!("Sky mode: weather, ephemeris, observing conditions, APOD, starcharts.");
+        println!("Gear mode: telescopes, eyepieces, combinations, observation logs.");
+        return;
+    }
+    if std::env::args().skip(1).any(|a| a == "-v" || a == "--version") {
+        println!("astro {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     config::ensure_dir();
     // Config::load() creates the file with defaults if missing. Detect
     // first run by checking existence BEFORE load.

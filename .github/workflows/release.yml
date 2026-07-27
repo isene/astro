@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: astro-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: astro-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: astro-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: astro-macos-aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: astro
+
+      # crust and glow are path dependencies, so they have to sit beside
+      # the checkout exactly as they do locally.
+      - name: Checkout crust
+        uses: actions/checkout@v4
+        with:
+          repository: isene/crust
+          path: crust
+
+      - name: Checkout glow
+        uses: actions/checkout@v4
+        with:
+          repository: isene/glow
+          path: glow
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build
+        working-directory: astro
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        working-directory: astro
+        run: |
+          cp target/${{ matrix.target }}/release/astro ../${{ matrix.artifact }}
+          chmod +x ../${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*/*
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            Download the binary for your platform:
+            ```bash
+            chmod +x astro-*
+            ./astro-linux-x86_64    # or your platform
+            ```
+
+            Or let the suite launcher fetch it: `fe2o3`, move to the astro
+            card, press `i`.
+
+            ## Platforms
+            - `astro-linux-x86_64` - Linux (Intel/AMD 64-bit)
+            - `astro-linux-aarch64` - Linux (ARM 64-bit, Raspberry Pi)
+            - `astro-macos-x86_64` - macOS (Intel)
+            - `astro-macos-aarch64` - macOS (Apple Silicon)

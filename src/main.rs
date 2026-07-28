@@ -49,10 +49,6 @@ fn main() {
     let mut app = App::new(cfg);
     app.fetch_all();
     app.render_all();
-    app.auto_image();
-    if app.current_image.is_some() {
-        app.refresh_image();
-    }
 
     loop {
         let Some(key) = Input::getchr(Some(1)) else {
@@ -100,7 +96,7 @@ fn main() {
                 if app.current_image.is_some() { app.refresh_image(); }
             }
             "T" => { app.show_gear_tonight(); }
-            "ESC" => { app.render_footer(); }
+            "ESC" => { app.hide_image(); }
             "?" => app.show_help(),
             "UP" | "k" => { app.move_row(-1); app.render_all(); }
             "DOWN" | "j" => { app.move_row(1); app.render_all(); }
@@ -118,8 +114,6 @@ fn main() {
             "b" => { app.prompt_bortle(); app.render_all(); }
             "e" => { app.show_all_events(); }
             "s" => { app.show_sky(); }
-            "C" => { app.show_starchart(); }
-            "S" => { app.open_starchart_external(); }
             "A" => { app.show_apod(); }
             "ENTER" => { app.refresh_image(); }
             "r" => { app.render_all(); }
@@ -283,16 +277,6 @@ impl App {
         self.event_rx = Some(rx);
     }
 
-    fn spawn_starchart_fetch(&mut self, year: i32, month: u32, day: u32, hour: u32) {
-        let (tx, rx) = mpsc::channel();
-        let lat = self.cfg.lat;
-        let lon = self.cfg.lon;
-        let tz = self.cfg.tz;
-        std::thread::spawn(move || {
-            let _ = tx.send(images::fetch_starchart(year, month, day, hour, lat, lon, tz));
-        });
-        self.image_rx = Some(rx);
-    }
 
     fn spawn_apod_fetch(&mut self) {
         let (tx, rx) = mpsc::channel();
@@ -369,26 +353,6 @@ impl App {
         }
     }
 
-    /// Astropanel behavior: auto-fetch starchart when lat > 23, else APOD.
-    /// Called on startup. Uses cached image if available (instant), else
-    /// kicks off a background fetch that populates when ready.
-    fn auto_image(&mut self) {
-        if self.cfg.lat > 23.0 {
-            if let Some(h) = self.hours.get(self.index).cloned() {
-                let (y, m, d) = parse_date(&h.date);
-                if let Some(path) = images::starchart_cached(y, m, d, h.hour as u32,
-                    self.cfg.lat, self.cfg.lon, self.cfg.tz) {
-                    self.current_image = Some(path);
-                } else {
-                    self.spawn_starchart_fetch(y, m, d, h.hour as u32);
-                }
-            }
-        } else if let Some(path) = images::apod_cached() {
-            self.current_image = Some(path);
-        } else {
-            self.spawn_apod_fetch();
-        }
-    }
 
     fn move_row(&mut self, n: i32) {
         let len = self.hours.len();
@@ -415,7 +379,53 @@ impl App {
         self.render_titles();
         self.render_left();
         self.render_main();
+        self.render_sky_panel();
         self.render_footer();
+    }
+
+    /// Drop the image that is covering the chart and put the sky back.
+    fn hide_image(&mut self) {
+        if self.current_image.is_none() {
+            self.render_footer();
+            return;
+        }
+        self.clear_image();
+        self.current_image = None;
+        self.main_p.full_refresh();
+        self.render_all();
+    }
+
+    /// The sky for the selected hour, in the lower half of the main
+    /// pane. An image (APOD) takes that space when one is up, so the
+    /// chart yields to it until ESC puts the sky back.
+    fn render_sky_panel(&mut self) {
+        if self.current_image.is_some() {
+            return;
+        }
+        let Some(h) = self.hours.get(self.index) else { return };
+        let (year, month, day) = parse_date(&h.date);
+        let at = sky::Moment { year, month, day, hour: h.hour as u32 };
+        let (x, y, w, hh) = self.image_rect();
+        if hh < 6 || w < 20 {
+            return;
+        }
+        use std::io::Write;
+        print!("{}", sky::panel(at, self.cfg.lat, self.cfg.lon, self.cfg.tz,
+                                &self.sky_opts, x, y, w, hh));
+        std::io::stdout().flush().ok();
+    }
+
+    /// The part of the main pane below the tables: the sky chart's home,
+    /// and where an image goes when one is showing.
+    fn image_rect(&self) -> (u16, u16, u16, u16) {
+        let top_offset: u16 = 23;
+        let bottom_gap: u16 = 1;
+        (
+            self.main_p.x,
+            self.main_p.y + top_offset,
+            self.main_p.w.saturating_sub(2),
+            self.main_p.h.saturating_sub(top_offset + bottom_gap),
+        )
     }
 
     fn render_header(&mut self) {
@@ -599,7 +609,7 @@ impl App {
         let fog_s = if h.fog <= 0.0 { "-".into() } else { format!("{}%", h.fog as i64) };
         let uv_s = if h.uv == 0.0 { "-".into() } else { format!("{:.1}", h.uv) };
         // Compress the six weather lines into a 3x2 table so the
-        // (optional) starchart / APOD image doesn't crash into the text.
+        // (optional) sky chart / APOD image doesn't crash into the text.
         let left = [
             format!("Clouds:    {}% (low/high {}/{})", h.cloud, h.cloud_low, h.cloud_high),
             format!("Humidity:  {}% (fog {})", h.humidity as i64, fog_s),
@@ -658,7 +668,7 @@ impl App {
     }
 
     fn render_footer(&mut self) {
-        let cmds = "?=Help g=Gear T=Tonight-gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Sky C=Starchart S=Open A=APOD r=Redraw R=Refetch W=Write q=Quit";
+        let cmds = "?=Help g=Gear T=Tonight-gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Sky A=APOD r=Redraw R=Refetch W=Write q=Quit";
         self.footer.say(cmds);
     }
 
@@ -666,9 +676,6 @@ impl App {
         self.footer.say(&style::fg(msg, color));
     }
 
-    /// Fetch and display the Stelvision starchart for the selected hour.
-    /// Non-blocking: kicks off a background fetch; the image appears when
-    /// the download completes (polled each render tick).
     /// The braille sky for the selected hour, full screen.
     ///
     /// The chart owns the keyboard while it is up and hands back the
@@ -687,7 +694,7 @@ impl App {
                 sky::Moment { year, month, day, hour: h.hour as u32 }
             })
             .collect();
-        // Kitty draws images above text, so a starchart left on screen
+        // Kitty draws images above text, so an image left on screen
         // would sit on top of the chart.
         self.clear_image();
         let place = self.cfg.location.clone();
@@ -712,31 +719,7 @@ impl App {
         }
     }
 
-    fn show_starchart(&mut self) {
-        let Some(h) = self.hours.get(self.index).cloned() else { return };
-        let (y, m, d) = parse_date(&h.date);
-        if let Some(path) = images::starchart_cached(y, m, d, h.hour as u32,
-            self.cfg.lat, self.cfg.lon, self.cfg.tz) {
-            self.show_image_path(path);
-            return;
-        }
-        self.footer_say(" Fetching starchart...", 226);
-        self.render_footer();
-        self.spawn_starchart_fetch(y, m, d, h.hour as u32);
-    }
 
-    /// Open the last-fetched starchart in the system image viewer.
-    fn open_starchart_external(&mut self) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let path = std::path::PathBuf::from(home).join(".astro/images/starchart.jpg");
-        if !path.exists() {
-            self.footer_say(" No starchart yet (press s first)", 196);
-            return;
-        }
-        let _ = std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn();
-    }
 
     /// Fetch and display the NASA APOD (cached per day).
     fn show_apod(&mut self) {
@@ -770,15 +753,9 @@ impl App {
             return;
         }
 
-        // Place the image in the lower portion of the main pane, leaving
-        // the top for the weather info + ephemeris table and a 2-row gap
-        // above the status bar at the bottom.
-        let top_offset: u16 = 23;
-        let bottom_gap: u16 = 1;
-        let img_x = self.main_p.x;
-        let img_y = self.main_p.y + top_offset;
-        let img_w = self.main_p.w.saturating_sub(2);
-        let img_h = self.main_p.h.saturating_sub(top_offset + bottom_gap);
+        // The lower portion of the main pane, the same rectangle the
+        // sky chart draws into.
+        let (img_x, img_y, img_w, img_h) = self.image_rect();
 
         if img_h < 4 {
             self.footer_say(" Not enough room for image", 196);
@@ -815,9 +792,7 @@ impl App {
               T       Tonight's gear suggestions (for currently-visible bodies)\n  \
               s       Sky chart for the selected hour (drawn here)\n  \
                         ←/→ hour · ↑/↓ day · c lines · n names · +/- magnitude\n  \
-              C       Fetch the Stelvision starchart image instead\n  \
-              S       Open that starchart in an external image viewer\n  \
-              A       Astronomy Picture of the Day\n  \
+              A       Astronomy Picture of the Day (ESC puts the sky back)\n  \
               ENTER   Refresh current image\n  \
               e       Show all upcoming astronomical events\n  \
               r       Redraw all panes\n  \
@@ -835,7 +810,7 @@ impl App {
               q / Q   Quit\n\n  \
             ESC or q closes this popup.";
         // Kitty places images at z=1 which sits above text, so the popup
-        // would appear behind the starchart / APOD. Remember whether an
+        // would appear behind the APOD image. Remember whether an
         // image was showing, hide it for the duration of the popup, then
         // restore on dismiss.
         let had_image = self.current_image.is_some();

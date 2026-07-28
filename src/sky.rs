@@ -145,13 +145,13 @@ impl Canvas {
         }
     }
 
-    /// The whole canvas as one printable frame, anchored at `top` row.
-    /// Colour is switched only when it changes, so a row of one-colour
-    /// stars costs one escape sequence, not one per cell.
-    fn frame(&self, top: u16) -> String {
+    /// The whole canvas as one printable frame, its top left cell at
+    /// (`left`, `top`). Colour is switched only when it changes, so a row
+    /// of one-colour stars costs one escape sequence, not one per cell.
+    fn frame(&self, left: u16, top: u16) -> String {
         let mut out = String::with_capacity(self.w * self.h * 3);
         for y in 0..self.h {
-            out.push_str(&Cursor::at(1, top + y as u16));
+            out.push_str(&Cursor::at(left, top + y as u16));
             let mut cur: Option<(u8, u8, u8)> = None;
             for x in 0..self.w {
                 let i = y * self.w + x;
@@ -321,27 +321,43 @@ pub fn run(
     }
 }
 
-/// The whole screen for one moment: title row, chart, key line.
-fn draw(
+/// The chart alone, inside the rectangle at (`x`, `y`) of `w`×`h` cells.
+///
+/// It takes a rectangle rather than the terminal because it is drawn at
+/// two sizes: the whole screen under `s`, and the lower half of the main
+/// pane on the front screen.
+pub fn panel(
     at: Moment,
     lat: f64,
     lon: f64,
     tz: f64,
-    place: &str,
     opts: &Opts,
-    cols: u16,
-    rows: u16,
+    x: u16,
+    y: u16,
+    w: u16,
+    h: u16,
 ) -> String {
     let (stars, segs) = catalog();
     let (lst, bodies) = orbit::sky_at(at.year, at.month, at.day, at.hour as f64, lat, lon, tz);
 
-    // One row of title, one of keys; the sky gets the rest.
-    let ch = rows.saturating_sub(2).max(4) as usize;
-    let cw = cols.max(20) as usize;
+    let ch = h.max(4) as usize;
+    let cw = w.max(20) as usize;
+    // Names need room. In a pane a third of the screen high they would
+    // be more text than sky, so they wait for the full-screen view.
+    let names = opts.names && w >= 60 && h >= 16;
+    // A dot at (px, py) lands at column x + px/2, row y + py/4.
+    let (x_off, y_off) = (x, y);
     let mut canvas = Canvas::new(cw, ch);
     let (dw, dh) = (cw as f64 * 2.0, ch as f64 * 4.0);
     let (cx, cy) = (dw / 2.0, dh / 2.0);
     let r = (dw.min(dh) / 2.0) - 2.0;
+    // How faint this much room can take. Star counts run about half a
+    // magnitude per factor of ten (15 stars brighter than 1st, 4,800
+    // brighter than 6th), so invert that for a tenth of the dots filled.
+    // Without it the pane-sized chart is a solid block of braille.
+    let dots = std::f64::consts::PI * r * r;
+    let fits = ((2.0 * 0.10 * dots).log10() - 0.68) / 0.5;
+    let mag_limit = opts.mag.min(fits).max(1.0);
 
     // Zenith at the centre, horizon at the rim, north up, east left:
     // the sky as you see it looking up, not as a map sees it.
@@ -360,7 +376,9 @@ fn draw(
 
     // Stick figures under everything else.
     if opts.lines {
-        let ink = (60, 78, 110);
+        // Fainter when the chart is small: with few stars plotted, full
+        // strength figures read as a web with the sky behind it.
+        let ink = if r < 40.0 { (46, 60, 88) } else { (60, 78, 110) };
         for seg in segs {
             for pair in seg.pts.windows(2) {
                 let (a, b) = (pair[0], pair[1]);
@@ -380,23 +398,23 @@ fn draw(
     // stop as soon as it passes the magnitude limit.
     let mut star_labels: Vec<(u16, u16, String, (u8, u8, u8))> = Vec::new();
     for s in stars {
-        if s.mag > opts.mag {
+        if s.mag > mag_limit {
             break;
         }
         let (alt, az) = altaz(s.ra, s.dec, lst, lat);
         if alt < 0.0 {
             continue;
         }
-        let (x, y) = project(alt, az);
+        let (px, py) = project(alt, az);
         let rgb = faded(teff_rgb(teff_from_bv(s.bv)), s.mag);
         if s.mag < 1.0 {
-            canvas.disc(x, y, 1, rgb, 10.0 - s.mag);
+            canvas.disc(px, py, 1, rgb, 10.0 - s.mag);
         } else {
-            canvas.set(x, y, rgb, 10.0 - s.mag);
+            canvas.set(px, py, rgb, 10.0 - s.mag);
         }
-        if opts.names && !s.name.is_empty() && s.mag < 1.8 {
-            let (col, row) = (x as u16 / 2 + 2, y as u16 / 4 + 2);
-            if (col as usize) + s.name.len() < cw {
+        if names && !s.name.is_empty() && s.mag < 1.8 {
+            let (col, row) = (x_off + px as u16 / 2 + 2, y_off + py as u16 / 4);
+            if (col + s.name.len() as u16) < x_off + w {
                 star_labels.push((col, row, s.name.to_string(), (150, 150, 165)));
             }
         }
@@ -409,12 +427,12 @@ fn draw(
         if alt < 0.0 {
             continue;
         }
-        let (x, y) = project(alt, az);
+        let (px, py) = project(alt, az);
         let rgb = body_rgb(name);
         let size = if *name == "sun" || *name == "moon" { 2 } else { 1 };
-        canvas.disc(x, y, size, rgb, 100.0);
-        let (col, row) = (x as u16 / 2 + 2, y as u16 / 4 + 2);
-        if (col as usize) + name.len() < cw {
+        canvas.disc(px, py, size, rgb, 100.0);
+        let (col, row) = (x_off + px as u16 / 2 + 2, y_off + py as u16 / 4);
+        if (col + name.len() as u16) < x_off + w {
             body_labels.push((col, row, (*name).to_string(), rgb));
         }
     }
@@ -432,24 +450,40 @@ fn draw(
         labels.push((col, row, text, rgb));
     }
 
-    let mut out = canvas.frame(2);
+    let mut out = canvas.frame(x, y);
 
     // Cardinal points sit on the rim, over whatever is under them.
     for (label, az) in [("N", 0.0), ("E", 90.0), ("S", 180.0), ("W", 270.0)] {
-        let (x, y) = project(0.0, az);
-        let col = (x as u16 / 2).clamp(1, cols.saturating_sub(1));
-        let row = (y as u16 / 4 + 2).clamp(2, rows.saturating_sub(1));
+        let (px, py) = project(0.0, az);
+        let col = (x_off + px as u16 / 2).clamp(x, x + w - 1);
+        let row = (y_off + py as u16 / 4).clamp(y, y + h - 1);
         out.push_str(&Cursor::at(col, row));
         out.push_str(&style::rgb(label, Some((255, 190, 90)), None, "b"));
     }
 
     for (col, row, text, rgb) in labels {
-        if row >= rows.saturating_sub(1) {
+        if row >= y + h {
             continue;
         }
         out.push_str(&Cursor::at(col, row));
         out.push_str(&style::rgb(&text, Some(rgb), None, ""));
     }
+    out
+}
+
+/// The whole screen for one moment: title row, chart, key line.
+fn draw(
+    at: Moment,
+    lat: f64,
+    lon: f64,
+    tz: f64,
+    place: &str,
+    opts: &Opts,
+    cols: u16,
+    rows: u16,
+) -> String {
+    let mut out = panel(at, lat, lon, tz, opts, 1, 2, cols, rows.saturating_sub(2));
+    let (lst, bodies) = orbit::sky_at(at.year, at.month, at.day, at.hour as f64, lat, lon, tz);
 
     // Title and keys.
     let up = |name: &str| {

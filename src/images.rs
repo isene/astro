@@ -1,4 +1,4 @@
-//! Image fetchers: NASA APOD and Stelvision starchart.
+//! Image fetcher: NASA APOD. The sky is drawn now, not fetched.
 
 use std::path::PathBuf;
 
@@ -88,24 +88,6 @@ pub fn apod_cached() -> Option<PathBuf> {
     None
 }
 
-/// Cache-only starchart lookup for the given parameters.
-pub fn starchart_cached(year: i32, month: u32, day: u32, hour: u32,
-    lat: f64, lon: f64, tz: f64) -> Option<PathBuf> {
-    let dir = cache_dir();
-    let stem = format!(
-        "starchart_{:04}{:02}{:02}_{:02}_{:.2}_{:.2}_{}",
-        year, month, day, hour, lat, lon, tz as i32
-    );
-    for ext in &["jpg", "png"] {
-        let p = dir.join(format!("{}.{}", stem, ext));
-        if p.exists() {
-            if let Ok(m) = std::fs::metadata(&p) {
-                if m.len() > 100 { return Some(p); }
-            }
-        }
-    }
-    None
-}
 
 fn today_utc() -> String {
     let secs = std::time::SystemTime::now()
@@ -140,61 +122,18 @@ fn cleanup_old_apod(dir: &std::path::Path, keep_date: &str) {
     }
 }
 
-/// Fetch starchart PNG from Stelvision for the given date/time and location.
-/// Cached per (date, hour, lat, lon, tz) tuple so repeated views of the same
-/// slot are instant. Converts to JPG via ImageMagick's `convert` when
-/// available for better terminal rendering.
-pub fn fetch_starchart(year: i32, month: u32, day: u32, hour: u32,
-    lat: f64, lon: f64, tz: f64) -> Option<PathBuf> {
-    let dir = ensure_cache_dir();
-    let stem = format!(
-        "starchart_{:04}{:02}{:02}_{:02}_{:.2}_{:.2}_{}",
-        year, month, day, hour, lat, lon, tz as i32
-    );
-    let jpg = dir.join(format!("{}.jpg", stem));
-    let png = dir.join(format!("{}.png", stem));
 
-    // Cache hit.
-    if jpg.exists() {
-        if let Ok(m) = std::fs::metadata(&jpg) {
-            if m.len() > 100 { return Some(jpg); }
-        }
-    }
-    if png.exists() {
-        if let Ok(m) = std::fs::metadata(&png) {
-            if m.len() > 100 { return Some(png); }
-        }
-    }
-
-    let url = format!(
-        "https://www.stelvision.com/carte-ciel/visu_carte.php?stelmarq=C&mode_affichage=normal&req=stel&date_j_carte={:02}&date_m_carte={:02}&date_a_carte={:04}&heure_h={}&heure_m=00&longi={}&lat={}&tzone={}.0&dst_offset=1&taille_carte=1200&fond_r=255&fond_v=255&fond_b=255&lang=en",
-        day, month, year, hour, lon, lat, tz as i32
-    );
-    if !download(&url, &png) { return None; }
-
-    let ok = std::process::Command::new("convert")
-        .arg(&png).arg(&jpg)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if ok { Some(jpg) } else { Some(png) }
-}
-
-/// Remove all cached images older than the given date. Useful for long-lived
-/// sessions to bound disk usage.
+/// Clear out the Stelvision starchart cache. The sky is drawn now, so
+/// those files are never read again; this reclaims the disk once and
+/// afterwards is a `read_dir` that finds nothing.
 pub fn cleanup_cache() {
     let dir = cache_dir();
     if !dir.exists() { return; }
-    // Limit starchart cache to ~50 entries.
-    let mut entries: Vec<_> = std::fs::read_dir(&dir).ok()
-        .map(|iter| iter.flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with("starchart_"))
-            .collect())
-        .unwrap_or_default();
-    entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
-    if entries.len() > 50 {
-        for e in entries.iter().take(entries.len() - 50) {
-            let _ = std::fs::remove_file(e.path());
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("starchart_") {
+                let _ = std::fs::remove_file(e.path());
+            }
         }
     }
 }

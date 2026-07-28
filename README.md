@@ -12,9 +12,13 @@ Built on [crust](https://github.com/isene/crust) (TUI), with [glow](https://gith
 
 ## Screenshots
 
-Sky mode with the Stelvision starchart for the selected hour:
+Sky mode with the sky chart for the selected hour:
 
-![Sky mode + starchart](img/screenshot-sky-starchart.png)
+![Sky mode + sky chart](img/screenshot-sky-chart.png)
+
+The same sky full screen, on `s`:
+
+![The sky chart full screen](img/screenshot-sky-full.png)
 
 Sky mode with NASA's Astronomy Picture of the Day:
 
@@ -53,8 +57,7 @@ Plan your observations with weather, ephemeris, and events.
 - **Ephemeris table** (RA, Dec, distance, rise, transit, set) for all bodies, computed against the IAU 2006 obliquity standard via [orbit](https://github.com/isene/orbit).
 - **Astronomical events** from the [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed, in-line with the hour bracket.
 - **Tonight summary** fallback when there are no notable events: moon phase + rise/set, planets above the horizon, constellations near the zenith for the date and hemisphere, Bortle hint.
-- **Sky chart** for the selected hour, drawn here in braille: 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. Offline, and the faintest star it plots follows your Bortle setting.
-- **Starchart** from [Stelvision](https://www.stelvision.com/carte-ciel/) for the selected hour, as an image (cached per slot, only generated for latitudes above +23).
+- **Sky chart** for the selected hour, drawn in braille: 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
 - **Astronomy Picture of the Day** ([NASA APOD](https://apod.nasa.gov/), cached per day).
 - **Inline image display** via kitty / sixel / w3m / chafa.
 - **Julian Date** in the header.
@@ -163,10 +166,8 @@ The merge unlocks features neither standalone app could:
 | `PgUP` / `PgDOWN`, `K` / `J` | Page |
 | `HOME` / `END` | First / last hour |
 | `e` | Show all upcoming astronomical events |
-| `s` | Sky chart for the selected hour (`←`/`→` hour, `↑`/`↓` day, `c` lines, `n` names, `+`/`-` magnitude, `q` back) |
-| `C` | Fetch the Stelvision starchart image instead |
-| `S` | Open that starchart in an external image viewer |
-| `A` | Astronomy Picture of the Day |
+| `s` | Sky chart full screen (`←`/`→` hour, `↑`/`↓` day, `c` lines, `n` names, `+`/`-` magnitude, `q` back) |
+| `A` | Astronomy Picture of the Day (covers the chart; `ESC` puts the sky back) |
 | `ENTER` | Refresh current image |
 | `r` | Redraw all panes |
 | `R` | Refetch weather + events |
@@ -255,7 +256,7 @@ Other paths:
 - `~/.astro/gear_config.json` — Gear-mode visual settings (colors, auto-backup count).
 - `~/.astro/gear_backups/` — rotated catalog backups.
 - `~/.astro/weather_cache.json` — weather cache (TTL 3 hours).
-- `~/.astro/images/` — APOD per day, starchart per slot (cleaned to ~50 entries).
+- `~/.astro/images/` — APOD per day. Old Stelvision starchart files are deleted on start; the chart is drawn now.
 
 ## Migration from nova / scope
 
@@ -267,7 +268,7 @@ The standalone [nova](https://github.com/isene/nova) and [scope](https://github.
 
 - Linux or macOS, x86_64 or aarch64.
 - `imagemagick` (`convert`) on `PATH` for inline image display.
-- A terminal that speaks the kitty graphics protocol, sixel, w3m img, or chafa for inline images. Without any of those astro still runs but starcharts and APOD are unavailable inline (you can press `S` to open the starchart in your system image viewer instead).
+- A terminal that speaks the kitty graphics protocol, sixel, w3m img, or chafa for inline images. Without any of those astro still runs, and the sky chart is unaffected: it is braille, not an image. Only APOD needs a graphics-capable terminal.
 
 ## Data sources
 
@@ -275,7 +276,6 @@ The standalone [nova](https://github.com/isene/nova) and [scope](https://github.
 - **Events**: [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed
 - **Stars**: [Yale Bright Star Catalogue, 5th Revised Ed.](http://tdc-www.harvard.edu/catalogs/bsc5.html) (public domain), names from the [IAU Catalog of Star Names](https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt)
 - **Constellation figures**: [d3-celestial](https://github.com/ofrohn/d3-celestial) by Olaf Frohn (BSD 3-clause) — see `data/README.md`
-- **Starchart image**: [stelvision.com](https://www.stelvision.com/carte-ciel/)
 - **APOD**: [apod.nasa.gov](https://apod.nasa.gov/)
 - **Ephemeris**: [orbit](https://github.com/isene/orbit), IAU 2006 obliquity standard, ported from [ruby-ephemeris](https://github.com/isene/ephemeris)
 

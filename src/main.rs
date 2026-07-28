@@ -4,6 +4,7 @@ mod date_util;
 mod events;
 mod gear;
 mod images;
+mod sky;
 mod weather;
 
 use crust::{Crust, Input, Pane};
@@ -23,7 +24,7 @@ fn main() {
         println!();
         println!("Usage: astro");
         println!();
-        println!("Sky mode: weather, ephemeris, observing conditions, APOD, starcharts.");
+        println!("Sky mode: weather, ephemeris, observing conditions, sky chart, APOD.");
         println!("Gear mode: telescopes, eyepieces, combinations, observation logs.");
         return;
     }
@@ -116,7 +117,8 @@ fn main() {
             "w" => { app.prompt_wind(); app.render_all(); }
             "b" => { app.prompt_bortle(); app.render_all(); }
             "e" => { app.show_all_events(); }
-            "s" => { app.show_starchart(); }
+            "s" => { app.show_sky(); }
+            "C" => { app.show_starchart(); }
             "S" => { app.open_starchart_external(); }
             "A" => { app.show_apod(); }
             "ENTER" => { app.refresh_image(); }
@@ -166,10 +168,14 @@ struct App {
     /// render tick.
     event_rx: Option<mpsc::Receiver<HashMap<String, events::Event>>>,
     image_rx: Option<mpsc::Receiver<Option<std::path::PathBuf>>>,
+
+    /// Chart toggles, kept between visits to the sky view.
+    sky_opts: sky::Opts,
 }
 
 impl App {
     fn new(cfg: Config) -> Self {
+        let cfg_bortle = cfg.bortle;
         let (cols, rows) = Crust::terminal_size();
         let today = date_util::today();
         let panes = Self::build_panes(cols, rows);
@@ -190,6 +196,7 @@ impl App {
             current_image: None,
             event_rx: None,
             image_rx: None,
+            sky_opts: sky::Opts::for_bortle(cfg_bortle),
         }
     }
 
@@ -651,7 +658,7 @@ impl App {
     }
 
     fn render_footer(&mut self) {
-        let cmds = "?=Help g=Gear T=Tonight-gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Starchart S=Open A=APOD r=Redraw R=Refetch W=Write q=Quit";
+        let cmds = "?=Help g=Gear T=Tonight-gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Sky C=Starchart S=Open A=APOD r=Redraw R=Refetch W=Write q=Quit";
         self.footer.say(cmds);
     }
 
@@ -662,6 +669,44 @@ impl App {
     /// Fetch and display the Stelvision starchart for the selected hour.
     /// Non-blocking: kicks off a background fetch; the image appears when
     /// the download completes (polled each render tick).
+    /// The braille sky for the selected hour, full screen.
+    ///
+    /// The chart owns the keyboard while it is up and hands back the
+    /// hour the user left on, so walking the night in the chart moves
+    /// the left pane with it.
+    fn show_sky(&mut self) {
+        if self.hours.is_empty() {
+            self.footer_say(" No hours loaded yet", 196);
+            return;
+        }
+        let moments: Vec<sky::Moment> = self
+            .hours
+            .iter()
+            .map(|h| {
+                let (year, month, day) = parse_date(&h.date);
+                sky::Moment { year, month, day, hour: h.hour as u32 }
+            })
+            .collect();
+        // Kitty draws images above text, so a starchart left on screen
+        // would sit on top of the chart.
+        self.clear_image();
+        let place = self.cfg.location.clone();
+        self.index = sky::run(
+            &moments, self.index, self.cfg.lat, self.cfg.lon, self.cfg.tz,
+            &place, &mut self.sky_opts,
+        );
+        // Same resume dance as Gear mode: the panes' prev_frame still
+        // claims the old content, so a plain render would diff-skip the
+        // rows the chart overwrote.
+        Crust::clear_screen();
+        self.header.full_refresh();
+        self.titles.full_refresh();
+        self.left.full_refresh();
+        self.main_p.full_refresh();
+        self.footer.full_refresh();
+        self.render_all();
+    }
+
     fn show_starchart(&mut self) {
         let Some(h) = self.hours.get(self.index).cloned() else { return };
         let (y, m, d) = parse_date(&h.date);
@@ -763,8 +808,10 @@ impl App {
             VIEW\n  \
               g       Switch to Gear mode\n  \
               T       Tonight's gear suggestions (for currently-visible bodies)\n  \
-              s       Get starchart for the selected hour\n  \
-              S       Open starchart in external image viewer\n  \
+              s       Sky chart for the selected hour (drawn here)\n  \
+                        ←/→ hour · ↑/↓ day · c lines · n names · +/- magnitude\n  \
+              C       Fetch the Stelvision starchart image instead\n  \
+              S       Open that starchart in an external image viewer\n  \
               A       Astronomy Picture of the Day\n  \
               ENTER   Refresh current image\n  \
               e       Show all upcoming astronomical events\n  \

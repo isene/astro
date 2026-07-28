@@ -47,6 +47,12 @@ jobs:
           repository: isene/glow
           path: glow
 
+      - name: Checkout orbit
+        uses: actions/checkout@v4
+        with:
+          repository: isene/orbit
+          path: orbit
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

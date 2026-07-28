@@ -57,7 +57,7 @@ Plan your observations with weather, ephemeris, and events.
 - **Ephemeris table** (RA, Dec, distance, rise, transit, set) for all bodies, computed against the IAU 2006 obliquity standard via [orbit](https://github.com/isene/orbit).
 - **Astronomical events** from the [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed, in-line with the hour bracket.
 - **Tonight summary** fallback when there are no notable events: moon phase + rise/set, planets above the horizon, constellations near the zenith for the date and hemisphere, Bortle hint.
-- **Sky chart** for the selected hour, drawn in braille: 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
+- **Sky chart** for the selected hour, drawn in braille by [starmap](https://github.com/isene/starmap): 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
 - **Astronomy Picture of the Day** ([NASA APOD](https://apod.nasa.gov/), cached per day).
 - **Inline image display** via kitty / sixel / w3m / chafa.
 - **Julian Date** in the header.
@@ -274,8 +274,7 @@ The standalone [nova](https://github.com/isene/nova) and [scope](https://github.
 
 - **Weather**: [api.met.no](https://api.met.no/) (Norwegian Meteorological Institute)
 - **Events**: [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed
-- **Stars**: [Yale Bright Star Catalogue, 5th Revised Ed.](http://tdc-www.harvard.edu/catalogs/bsc5.html) (public domain), names from the [IAU Catalog of Star Names](https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt)
-- **Constellation figures**: [d3-celestial](https://github.com/ofrohn/d3-celestial) by Olaf Frohn (BSD 3-clause) — see `data/README.md`
+- **Sky chart**: [starmap](https://github.com/isene/starmap), which carries the Yale Bright Star Catalogue, Hipparcos distances, the IAU star names and d3-celestial's constellation figures
 - **APOD**: [apod.nasa.gov](https://apod.nasa.gov/)
 - **Ephemeris**: [orbit](https://github.com/isene/orbit), IAU 2006 obliquity standard, ported from [ruby-ephemeris](https://github.com/isene/ephemeris)
 

@@ -53,6 +53,12 @@ jobs:
           repository: isene/orbit
           path: orbit
 
+      - name: Checkout starmap
+        uses: actions/checkout@v4
+        with:
+          repository: isene/starmap
+          path: starmap
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

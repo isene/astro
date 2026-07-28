@@ -705,6 +705,11 @@ impl App {
         self.main_p.full_refresh();
         self.footer.full_refresh();
         self.render_all();
+        // The chart painted over the whole screen, so whatever image was
+        // up before goes back up, the way it does leaving Gear mode.
+        if self.current_image.is_some() {
+            self.refresh_image();
+        }
     }
 
     fn show_starchart(&mut self) {

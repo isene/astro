@@ -29,32 +29,32 @@ jobs:
             artifact: astro-macos-aarch64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: astro
 
       # crust and glow are path dependencies, so they have to sit beside
       # the checkout exactly as they do locally.
       - name: Checkout crust
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: isene/crust
           path: crust
 
       - name: Checkout glow
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: isene/glow
           path: glow
 
       - name: Checkout orbit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: isene/orbit
           path: orbit
 
       - name: Checkout starmap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: isene/starmap
           path: starmap
@@ -92,7 +92,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

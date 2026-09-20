@@ -402,29 +402,32 @@ impl App {
     /// pane. An image (APOD) takes that space when one is up, so the
     /// chart yields to it until ESC puts the sky back.
     fn render_sky_panel(&mut self) {
-        // The picture that was up comes down before anything else.
-        self.clear_sky();
         if self.current_image.is_some() {
+            self.clear_sky();
             return;
         }
-        let Some(h) = self.hours.get(self.index) else { return };
+        let Some(h) = self.hours.get(self.index) else { self.clear_sky(); return };
         let (year, month, day) = parse_date(&h.date);
         let at = sky::Moment { year, month, day, hour: h.hour as u32 };
         let (x, y, w, hh) = self.image_rect();
         if hh < 6 || w < 20 {
+            self.clear_sky();
             return;
         }
         use std::io::Write;
         let pixels = self.sky_display.get_or_insert_with(glow::Display::new).supported();
         if pixels {
-            // Real pixels through glow: the names as text, the chart on top.
+            // Real pixels through glow: the names as text, the chart on
+            // top, the new picture replacing the old as it goes up.
+            self.wipe_block();
             let pic = sky::picture(at, self.cfg.lat, self.cfg.lon, self.cfg.tz, &self.sky_opts, x, y, w, hh);
             print!("{}", pic.text);
             std::io::stdout().flush().ok();
             if let Some(d) = self.sky_display.as_mut() {
-                d.show_canvas(&pic.canvas, x, y);
+                d.swap_canvas(&pic.canvas, x, y);
             }
         } else {
+            self.clear_sky();
             print!("{}", sky::panel(at, self.cfg.lat, self.cfg.lon, self.cfg.tz,
                                     &self.sky_opts, x, y, w, hh));
             std::io::stdout().flush().ok();
@@ -437,8 +440,12 @@ impl App {
         if let Some(d) = self.sky_display.as_mut() {
             d.clear_all();
         }
-        // The names were printed straight to the screen, not through a
-        // pane, so nothing else wipes them: blank the block here.
+        self.wipe_block();
+    }
+
+    /// Blank the chart's block. The names were printed straight to the
+    /// screen, not through a pane, so nothing else wipes them.
+    fn wipe_block(&mut self) {
         let (x, y, w, h) = self.image_rect();
         if h < 6 || w < 20 {
             return;

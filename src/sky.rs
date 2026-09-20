@@ -115,13 +115,12 @@ pub fn run(
     loop {
         let (cols, rows) = Crust::terminal_size();
         Crust::clear_screen();
-        if let Some(d) = display.as_mut() { d.clear_all(); }
         let (text, canvas) = draw(moments[index], lat, lon, tz, place, opts, cols, rows, pixels);
         print!("{text}");
         use std::io::Write;
         std::io::stdout().flush().ok();
         if let (Some(c), Some(d)) = (canvas, display.as_mut()) {
-            d.show_canvas(&c, 1, 2);
+            d.swap_canvas(&c, 1, 2);
         }
 
         let Some(key) = Input::getchr(None) else { continue };

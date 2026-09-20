@@ -417,17 +417,9 @@ impl App {
         use std::io::Write;
         let pixels = self.sky_display.get_or_insert_with(glow::Display::new).supported();
         if pixels {
-            // Real pixels through glow. The block is wiped first, so no
-            // name from the last chart is left under a new hole.
-            let blank = " ".repeat(w as usize);
-            let mut out = String::from(style::RESET);
-            for row in y..y + hh {
-                out.push_str(&Cursor::at(x, row));
-                out.push_str(&blank);
-            }
+            // Real pixels through glow: the names as text, the chart on top.
             let pic = sky::picture(at, self.cfg.lat, self.cfg.lon, self.cfg.tz, &self.sky_opts, x, y, w, hh);
-            out.push_str(&pic.text);
-            print!("{out}");
+            print!("{}", pic.text);
             std::io::stdout().flush().ok();
             if let Some(d) = self.sky_display.as_mut() {
                 d.show_canvas(&pic.canvas, x, y);
@@ -445,6 +437,21 @@ impl App {
         if let Some(d) = self.sky_display.as_mut() {
             d.clear_all();
         }
+        // The names were printed straight to the screen, not through a
+        // pane, so nothing else wipes them: blank the block here.
+        let (x, y, w, h) = self.image_rect();
+        if h < 6 || w < 20 {
+            return;
+        }
+        use std::io::Write;
+        let blank = " ".repeat(w as usize);
+        let mut out = String::from(style::RESET);
+        for row in y..y + h {
+            out.push_str(&Cursor::at(x, row));
+            out.push_str(&blank);
+        }
+        print!("{out}");
+        std::io::stdout().flush().ok();
     }
 
     /// The part of the main pane below the tables: the sky chart's home,

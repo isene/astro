@@ -676,7 +676,8 @@ impl App {
         self.footer.say(&style::fg(msg, color));
     }
 
-    /// The braille sky for the selected hour, full screen.
+    /// The sky for the selected hour, full screen: real pixels where the
+    /// terminal shows images, braille elsewhere.
     ///
     /// The chart owns the keyboard while it is up and hands back the
     /// hour the user left on, so walking the night in the chart moves
@@ -700,7 +701,7 @@ impl App {
         let place = self.cfg.location.clone();
         self.index = sky::run(
             &moments, self.index, self.cfg.lat, self.cfg.lon, self.cfg.tz,
-            &place, &mut self.sky_opts,
+            &place, &mut self.sky_opts, &mut self.image_display,
         );
         // Same resume dance as Gear mode: the panes' prev_frame still
         // claims the old content, so a plain render would diff-skip the

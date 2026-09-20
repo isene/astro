@@ -85,7 +85,8 @@ pub fn panel(
 }
 
 /// Draw the sky for `at` full screen, then own the keyboard until the
-/// user leaves.
+/// user leaves. Where `display` shows images the chart is real pixels
+/// through glow, else braille.
 ///
 /// Left and right walk the hours the app already has, so stepping
 /// through the night in the chart moves the selection in the left pane
@@ -98,20 +99,31 @@ pub fn run(
     tz: f64,
     place: &str,
     opts: &mut Opts,
+    display: &mut Option<glow::Display>,
 ) -> usize {
     if moments.is_empty() {
         return index;
     }
+    let pixels = display.get_or_insert_with(glow::Display::new).supported();
     loop {
         let (cols, rows) = Crust::terminal_size();
         Crust::clear_screen();
-        print!("{}", draw(moments[index], lat, lon, tz, place, opts, cols, rows));
+        if let Some(d) = display.as_mut() { d.clear_all(); }
+        let (text, canvas) = draw(moments[index], lat, lon, tz, place, opts, cols, rows, pixels);
+        print!("{text}");
         use std::io::Write;
         std::io::stdout().flush().ok();
+        if let (Some(c), Some(d)) = (canvas, display.as_mut()) {
+            d.show_canvas(&c, 1, 2);
+        }
 
         let Some(key) = Input::getchr(None) else { continue };
         match key.as_str() {
-            "q" | "Q" | "ESC" | "s" => return index,
+            "q" | "Q" | "ESC" | "s" => {
+                // The picture would sit over the front screen.
+                if let Some(d) = display.as_mut() { d.clear_all(); }
+                return index;
+            }
             "RIGHT" | "l" => index = (index + 1).min(moments.len() - 1),
             "LEFT" | "h" => index = index.saturating_sub(1),
             "DOWN" | "j" | "PgDOWN" => index = (index + 24).min(moments.len() - 1),
@@ -125,7 +137,9 @@ pub fn run(
     }
 }
 
-/// The whole screen for one moment: title row, chart, key line.
+/// The whole screen for one moment: title row, chart, key line. With
+/// `pixels` the chart comes back as a canvas to show at (1, 2), and the
+/// text holds only its names.
 fn draw(
     at: Moment,
     lat: f64,
@@ -135,9 +149,15 @@ fn draw(
     opts: &Opts,
     cols: u16,
     rows: u16,
-) -> String {
+    pixels: bool,
+) -> (String, Option<glow::Canvas>) {
     let (view, bodies) = view_at(at, lat, lon, tz);
-    let mut out = starmap::panel(&view, &opts.inner, &bodies, 1, 2, cols, rows.saturating_sub(2));
+    let (mut out, canvas) = if pixels {
+        let p = starmap::panel_pixels(&view, &opts.inner, &bodies, 1, 2, cols, rows.saturating_sub(2));
+        (p.text, Some(p.canvas))
+    } else {
+        (starmap::panel(&view, &opts.inner, &bodies, 1, 2, cols, rows.saturating_sub(2)), None)
+    };
 
     let up = |name: &str| {
         bodies
@@ -173,7 +193,7 @@ fn draw(
         " ←/→ hour · ↑/↓ day · c figures · n names · +/- fainter, brighter · q back",
         cols as usize,
     )));
-    out
+    (out, canvas)
 }
 
 #[cfg(test)]
@@ -189,12 +209,14 @@ mod tests {
         let t = std::time::Instant::now();
         let mut frame = String::new();
         for _ in 0..20 {
-            frame = draw(at, 59.9, 10.7, 2.0, "Oslo", &opts, 150, 42);
+            frame = draw(at, 59.9, 10.7, 2.0, "Oslo", &opts, 150, 42, false).0;
         }
         let per = t.elapsed() / 20;
         assert!(frame.contains('N') && frame.contains('S'), "no cardinal points");
         assert!(frame.chars().any(|c| ('\u{2800}'..='\u{28ff}').contains(&c)), "no braille");
         assert!(per.as_millis() < 20, "one frame took {per:?}");
+        let (text, canvas) = draw(at, 59.9, 10.7, 2.0, "Oslo", &opts, 150, 42, true);
+        assert!(canvas.is_some() && text.contains("Oslo"), "the pixel frame has its canvas and title");
     }
 
     /// The moon is a body on the chart, and it moves during the day.

@@ -57,7 +57,7 @@ Plan your observations with weather, ephemeris, and events.
 - **Ephemeris table** (RA, Dec, distance, rise, transit, set) for all bodies, computed against the IAU 2006 obliquity standard via [orbit](https://github.com/isene/orbit).
 - **Astronomical events** from the [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed, in-line with the hour bracket.
 - **Tonight summary** fallback when there are no notable events: moon phase + rise/set, planets above the horizon, constellations near the zenith for the date and hemisphere, Bortle hint.
-- **Sky chart** for the selected hour, drawn in braille by [starmap](https://github.com/isene/starmap): 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
+- **Sky chart** for the selected hour, drawn by [starmap](https://github.com/isene/starmap) in pixels or braille: 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
 - **Astronomy Picture of the Day** ([NASA APOD](https://apod.nasa.gov/), cached per day).
 - **Inline image display** via kitty / sixel / w3m / chafa.
 - **Julian Date** in the header.

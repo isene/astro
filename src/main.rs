@@ -114,7 +114,7 @@ fn main() {
             "b" => { app.prompt_bortle(); app.render_all(); }
             "e" => { app.show_all_events(); }
             "s" => { app.show_sky(); }
-            "A" => { app.show_apod(); }
+            "A" => { if app.current_image.is_some() { app.hide_image(); } else { app.show_apod(); } }
             "ENTER" => { app.refresh_image(); }
             "r" => { app.render_all(); }
             "R" => { app.fetch_all(); app.render_all(); }
@@ -826,7 +826,7 @@ impl App {
               T       Tonight's gear suggestions (for currently-visible bodies)\n  \
               s       Sky chart for the selected hour (drawn here)\n  \
                         ←/→ hour · ↑/↓ day · c lines · n names · +/- magnitude\n  \
-              A       Astronomy Picture of the Day (ESC puts the sky back)\n  \
+              A       Astronomy Picture of the Day; A again or ESC puts the sky back\n  \
               ENTER   Refresh current image\n  \
               e       Show all upcoming astronomical events\n  \
               r       Redraw all panes\n  \

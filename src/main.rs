@@ -7,7 +7,7 @@ mod images;
 mod sky;
 mod weather;
 
-use crust::{Crust, Input, Pane};
+use crust::{Crust, Cursor, Input, Pane};
 use crust::style;
 use config::Config;
 use std::collections::HashMap;
@@ -156,6 +156,8 @@ struct App {
     today: (i32, u32, u32),
     image_display: Option<glow::Display>,
     current_image: Option<std::path::PathBuf>,
+    /// The front page's chart as a picture, where the terminal shows images.
+    sky_display: Option<glow::Display>,
 
     /// Async result channels. When a background fetch completes it sends
     /// the result here; the main loop polls and integrates it on the next
@@ -187,6 +189,7 @@ impl App {
             last_updated: String::new(),
             today,
             image_display: None,
+            sky_display: None,
             current_image: None,
             event_rx: None,
             image_rx: None,
@@ -399,6 +402,8 @@ impl App {
     /// pane. An image (APOD) takes that space when one is up, so the
     /// chart yields to it until ESC puts the sky back.
     fn render_sky_panel(&mut self) {
+        // The picture that was up comes down before anything else.
+        self.clear_sky();
         if self.current_image.is_some() {
             return;
         }
@@ -410,9 +415,36 @@ impl App {
             return;
         }
         use std::io::Write;
-        print!("{}", sky::panel(at, self.cfg.lat, self.cfg.lon, self.cfg.tz,
-                                &self.sky_opts, x, y, w, hh));
-        std::io::stdout().flush().ok();
+        let pixels = self.sky_display.get_or_insert_with(glow::Display::new).supported();
+        if pixels {
+            // Real pixels through glow. The block is wiped first, so no
+            // name from the last chart is left under a new hole.
+            let blank = " ".repeat(w as usize);
+            let mut out = String::from(style::RESET);
+            for row in y..y + hh {
+                out.push_str(&Cursor::at(x, row));
+                out.push_str(&blank);
+            }
+            let pic = sky::picture(at, self.cfg.lat, self.cfg.lon, self.cfg.tz, &self.sky_opts, x, y, w, hh);
+            out.push_str(&pic.text);
+            print!("{out}");
+            std::io::stdout().flush().ok();
+            if let Some(d) = self.sky_display.as_mut() {
+                d.show_canvas(&pic.canvas, x, y);
+            }
+        } else {
+            print!("{}", sky::panel(at, self.cfg.lat, self.cfg.lon, self.cfg.tz,
+                                    &self.sky_opts, x, y, w, hh));
+            std::io::stdout().flush().ok();
+        }
+    }
+
+    /// Take the front page's chart picture down. Anything that overdraws
+    /// the screen calls this first; render_all puts the chart back.
+    fn clear_sky(&mut self) {
+        if let Some(d) = self.sky_display.as_mut() {
+            d.clear_all();
+        }
     }
 
     /// The part of the main pane below the tables: the sky chart's home,
@@ -772,6 +804,7 @@ impl App {
     }
 
     fn clear_image(&mut self) {
+        self.clear_sky();
         if let Some(ref mut disp) = self.image_display {
             disp.clear(self.main_p.x, self.main_p.y, self.main_p.w, self.main_p.h,
                 self.cols, self.rows);

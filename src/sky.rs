@@ -84,6 +84,13 @@ pub fn panel(
     starmap::panel(&view, &opts.inner, &bodies, x, y, w, h)
 }
 
+/// The same block as a picture for glow: the names as text to print,
+/// and the chart as a canvas to show at (`x`, `y`).
+pub fn picture(at: Moment, lat: f64, lon: f64, tz: f64, opts: &Opts, x: u16, y: u16, w: u16, h: u16) -> starmap::Picture {
+    let (view, bodies) = view_at(at, lat, lon, tz);
+    starmap::panel_pixels(&view, &opts.inner, &bodies, x, y, w, h)
+}
+
 /// Draw the sky for `at` full screen, then own the keyboard until the
 /// user leaves. Where `display` shows images the chart is real pixels
 /// through glow, else braille.

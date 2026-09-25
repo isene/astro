@@ -32,6 +32,9 @@ pub fn run(env: super::SkyEnv) -> bool {
 
     loop {
         let Some(key) = Input::getchr(Some(5)) else { continue };
+        // Any key puts the key legend back, unless the key itself
+        // leaves a message there.
+        app.status = None;
         match key.as_str() {
             "g" | "G" => {
                 if app.cfg.auto_backup { data::backup(&app.store, app.cfg.backup_count); }

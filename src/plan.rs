@@ -332,10 +332,10 @@ fn draw(night: &Night, set: &[Field], sel: usize, note: &str, cols: u16, rows: u
         out.push_str(&style::rgb(&format!(" {note}"), Some((230, 230, 235)), None, ""));
     }
     out.push_str(&Cursor::at(1, rows));
-    out.push_str(&style::dim(&crust::truncate_ansi(
+    out.push_str(&crate::sky::key_bar(
         &format!(" j/k move · o seen · u not seen · x remove · ⏎ go to it · q back   log: ~/.astro/nights/{}.hl", night.date),
-        cols as usize,
-    )));
+        cols,
+    ));
     print!("{out}");
     std::io::stdout().flush().ok();
 }

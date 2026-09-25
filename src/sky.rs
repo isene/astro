@@ -146,7 +146,8 @@ fn sep_deg(ra1: f64, dec1: f64, ra2: f64, dec2: f64) -> f64 {
 }
 
 /// The sky for one moment, drawn into a rectangle: the block in the main
-/// pane on the front screen.
+/// pane on the front screen. It leaves out the Messier and Caldwell
+/// objects, which crowd a chart that small.
 pub fn panel(
     at: Moment,
     lat: f64,
@@ -159,14 +160,18 @@ pub fn panel(
     h: u16,
 ) -> String {
     let (view, bodies) = view_at(at, lat, lon, tz);
-    starmap::panel(&view, &opts.inner, &bodies, x, y, w, h)
+    starmap::panel(&view, &small(opts), &bodies, x, y, w, h)
 }
 
 /// The same block as a picture for glow: the names as text to print,
 /// and the chart as a canvas to show at (`x`, `y`).
 pub fn picture(at: Moment, lat: f64, lon: f64, tz: f64, opts: &Opts, x: u16, y: u16, w: u16, h: u16) -> starmap::Picture {
     let (view, bodies) = view_at(at, lat, lon, tz);
-    starmap::panel_pixels(&view, &opts.inner, &bodies, x, y, w, h)
+    starmap::panel_pixels(&view, &small(opts), &bodies, x, y, w, h)
+}
+
+fn small(opts: &Opts) -> starmap::Opts {
+    starmap::Opts { dso: false, ..opts.inner }
 }
 
 /// Draw the sky for `at` full screen, then own the keyboard until the
@@ -423,11 +428,18 @@ fn draw(
         "b",
     ));
     out.push_str(&Cursor::at(1, rows));
-    out.push_str(&style::dim(&crust::truncate_ansi(
+    out.push_str(&key_bar(
         " h/l hour · j/k day · arrows move · +/- zoom · / go to · ⏎ what is this · a plan it · p the plan · v eyepieces · d objects · 0 all · [/] stars · q back",
-        cols as usize,
-    )));
+        cols,
+    ));
     (out, canvas)
+}
+
+/// The key legend on the last row, on a grey bar so it stands apart
+/// from the note above it.
+pub fn key_bar(keys: &str, cols: u16) -> String {
+    let t: String = keys.chars().take(cols as usize).collect();
+    style::rgb(&crust::pad_display(&t, cols as usize), Some((215, 215, 220)), Some((60, 60, 66)), "")
 }
 
 #[cfg(test)]

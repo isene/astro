@@ -181,7 +181,7 @@ The merge unlocks features neither standalone app could:
   - date, location, time, weather, moon phase, visible planets, and Bortle from the Sky-mode snapshot taken when you pressed `g`;
   - tagged telescopes, eyepieces, and misc gear with their notes;
   - a combination table (MAGX / TFOV / pupil) for every tagged scope × tagged EP pair;
-  - **tonight's deep-sky targets** — month-appropriate Messier / NGC suggestions, filtered by your largest tagged aperture so a 60 mm refractor isn't pointed at a 13-mag galaxy;
+  - **tonight's deep-sky targets**: the Messier and Caldwell objects that climb past 30° tonight and that your largest tagged telescope can show;
   - **solar / H-α viewing tips** — appended automatically when any tagged misc item is recognised as a solar filter (`solar`, `h-alpha`, `daystar`, `quark`, `coronado`, `lunt`, …).
 
 ## Sky-mode keys

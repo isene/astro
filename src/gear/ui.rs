@@ -1028,17 +1028,15 @@ impl App {
             out.push('\n');
         }
 
-        // Tonight's best deep-sky targets — small built-in catalog of
-        // staple DSOs with their best months. Filtered by the current
-        // month and (very loosely) by aperture if the user has tagged
-        // any scope, so a 60mm refractor doesn't get told to chase a
-        // 13.0-mag galaxy.
+        // Tonight's deep-sky targets, from all the Messier and Caldwell
+        // objects: those that climb past 30° tonight and that the largest
+        // tagged telescope can show, brightest first.
         let max_app = tagged_ts.iter().map(|t| t.app).fold(0.0f64, f64::max);
-        let suggestions = dso_suggestions(current_month(), max_app);
-        if !suggestions.is_empty() {
+        let picks = tonight_targets(&self.env, max_app);
+        if !picks.is_empty() {
             out.push_str("## Tonight's deep-sky targets\n\n");
-            for s in &suggestions {
-                out.push_str(&format!("- **{}** ({}) — {}\n", s.name, s.kind, s.notes));
+            for (d, v) in &picks {
+                out.push_str(&format!("- **{}** ({}, mag {:.1}) · {}\n", d.label(), d.kind.name(), d.mag.unwrap_or(0.0), v.line()));
             }
             out.push('\n');
         }
@@ -1266,13 +1264,8 @@ fn chrono_date() -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
-fn current_month() -> u32 {
-    ymd_now().1 as u32
-}
-
 /// Civil-from-days algorithm (Howard Hinnant). Returns (year, month, day)
-/// in UTC. Good enough for "what month is it" — the exact local-midnight
-/// boundary doesn't matter for picking DSO targets.
+/// in UTC.
 fn ymd_now() -> (i64, i64, i64) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1292,98 +1285,35 @@ fn ymd_now() -> (i64, i64, i64) {
     (y, m, d)
 }
 
-/// One row of the built-in deep-sky catalog. `best_months` is a bitmap of
-/// the months when the object is well-placed for evening observers in
-/// the northern mid-latitudes (1=Jan … 12=Dec). `min_app` is a soft
-/// gate: if the user has tagged any telescope smaller than this, we
-/// assume they're not going to enjoy chasing the object.
-struct Dso {
-    name: &'static str,
-    kind: &'static str,
-    best_months: &'static [u32],
-    min_app: f64,
-    notes: &'static str,
-}
-
-/// Hand-curated short list of crowd-pleasers — bright Messiers, a few
-/// big NGCs and one comet-style staple per season. The point is "good
-/// list to skim before going outside", not a Burnham's replacement.
-const DSO_CATALOG: &[Dso] = &[
-    // Winter
-    Dso { name: "M42 (Orion Nebula)", kind: "emission nebula",
-        best_months: &[11,12,1,2,3], min_app: 0.0,
-        notes: "naked-eye, spectacular at any aperture" },
-    Dso { name: "M45 (Pleiades)", kind: "open cluster",
-        best_months: &[10,11,12,1,2], min_app: 0.0,
-        notes: "best at very low power, big TFOV" },
-    Dso { name: "M1 (Crab Nebula)", kind: "supernova remnant",
-        best_months: &[11,12,1,2,3], min_app: 80.0,
-        notes: "faint smudge in 80mm; UHC filter helps" },
-    Dso { name: "M35", kind: "open cluster",
-        best_months: &[12,1,2,3], min_app: 0.0,
-        notes: "rich Gemini cluster; NGC 2158 nearby" },
-    Dso { name: "M37 / M36 / M38", kind: "open clusters",
-        best_months: &[11,12,1,2,3], min_app: 0.0,
-        notes: "Auriga trio, all in one short hop" },
-    // Spring
-    Dso { name: "M81 / M82 (Bode's pair)", kind: "galaxies",
-        best_months: &[2,3,4,5,6], min_app: 80.0,
-        notes: "easy in 80mm, great contrast pair" },
-    Dso { name: "M51 (Whirlpool)", kind: "galaxy",
-        best_months: &[3,4,5,6,7], min_app: 100.0,
-        notes: "spiral arms hint from 150mm, dark sky required" },
-    Dso { name: "M3", kind: "globular cluster",
-        best_months: &[3,4,5,6,7], min_app: 60.0,
-        notes: "resolves into stars from 100mm" },
-    Dso { name: "M13 (Hercules)", kind: "globular cluster",
-        best_months: &[4,5,6,7,8,9], min_app: 60.0,
-        notes: "showpiece globular, splits at 150mm" },
-    Dso { name: "M44 (Beehive)", kind: "open cluster",
-        best_months: &[1,2,3,4,5], min_app: 0.0,
-        notes: "binoculars or low-power EP only" },
-    // Summer
-    Dso { name: "M57 (Ring)", kind: "planetary nebula",
-        best_months: &[6,7,8,9,10], min_app: 80.0,
-        notes: "tiny but obvious ring; punch up the magnification" },
-    Dso { name: "M27 (Dumbbell)", kind: "planetary nebula",
-        best_months: &[7,8,9,10], min_app: 60.0,
-        notes: "bright, big, easy — UHC darkens the sky around it" },
-    Dso { name: "M22", kind: "globular cluster",
-        best_months: &[6,7,8,9], min_app: 60.0,
-        notes: "Sagittarius globular, often outshines M13" },
-    Dso { name: "M8 (Lagoon)", kind: "emission nebula",
-        best_months: &[6,7,8,9], min_app: 0.0,
-        notes: "binocular target, complex with low power + filter" },
-    Dso { name: "M11 (Wild Duck)", kind: "open cluster",
-        best_months: &[6,7,8,9,10], min_app: 0.0,
-        notes: "dense, almost globular-looking cluster" },
-    // Autumn
-    Dso { name: "M31 (Andromeda)", kind: "galaxy",
-        best_months: &[8,9,10,11,12,1], min_app: 0.0,
-        notes: "naked-eye core, full disk needs binoculars" },
-    Dso { name: "M33 (Triangulum)", kind: "galaxy",
-        best_months: &[9,10,11,12,1], min_app: 80.0,
-        notes: "low surface brightness — wide field, dark sky" },
-    Dso { name: "NGC 869 / NGC 884 (Double Cluster)", kind: "open clusters",
-        best_months: &[8,9,10,11,12,1], min_app: 0.0,
-        notes: "naked-eye in dark skies, spectacular at low power" },
-    Dso { name: "M15", kind: "globular cluster",
-        best_months: &[8,9,10,11], min_app: 60.0,
-        notes: "compact, dense Pegasus globular" },
-    Dso { name: "M2", kind: "globular cluster",
-        best_months: &[8,9,10,11], min_app: 60.0,
-        notes: "slightly looser than M15, same Aquarius region" },
-];
-
-/// Pick suggestions whose best-month list contains `month` and whose
-/// `min_app` is satisfied by the largest tagged scope. With no scope
-/// tagged (`max_app` = 0), we drop the aperture filter entirely so the
-/// log is still useful.
-fn dso_suggestions(month: u32, max_app: f64) -> Vec<&'static Dso> {
-    DSO_CATALOG.iter()
-        .filter(|d| d.best_months.contains(&month))
-        .filter(|d| max_app == 0.0 || max_app >= d.min_app)
-        .collect()
+/// The Messier and Caldwell objects worth a look tonight with this
+/// aperture: up past 30° at some point, and bright enough. A telescope
+/// reaches its limiting magnitude on stars; spread over an area an
+/// object needs about two magnitudes more, so that is taken off. With no
+/// telescope tagged, the naked eye's fifth magnitude.
+fn tonight_targets(env: &super::SkyEnv, max_app: f64) -> Vec<(&'static starmap::Dso, crate::plan::Visibility)> {
+    let p: Vec<u32> = env.date.split('-').filter_map(|x| x.parse().ok()).collect();
+    if p.len() < 3 || (env.lat == 0.0 && env.lon == 0.0) {
+        return Vec::new();
+    }
+    let (y, m, d) = crate::plan::night_of(p[0] as i32, p[1], p[2], env.hour);
+    let night = crate::plan::Night {
+        date: format!("{y:04}-{m:02}-{d:02}"),
+        place: env.location.clone(),
+        lat: env.lat,
+        lon: env.lon,
+        tz: env.tz,
+        targets: Vec::new(),
+    };
+    let limit = if max_app > 0.0 { optics::mlim_bortle(max_app, env.bortle.max(1.0)) - 2.0 } else { 5.0 };
+    let mut picks: Vec<_> = starmap::dsos()
+        .iter()
+        .filter(|d| d.mag.is_some_and(|m| m <= limit))
+        .map(|d| (d, night.when(d)))
+        .filter(|(_, v)| v.best_alt >= 30.0)
+        .collect();
+    picks.sort_by(|a, b| a.0.mag.unwrap_or(99.0).total_cmp(&b.0.mag.unwrap_or(99.0)));
+    picks.truncate(12);
+    picks
 }
 
 /// Match free-text user labels against keywords that tag a piece of

@@ -274,6 +274,32 @@ pub fn run(
                     note = format!("No Messier or Caldwell object called {}", asked.trim());
                 }
             }
+            "a" => {
+                let at = moments[index];
+                let mut night = crate::plan::Night::load(crate::plan::night_of(at.year, at.month, at.day, at.hour), place, lat, lon, tz);
+                note = match under_crosshair(&view, opts.zoom) {
+                    Some(d) if night.add(d.id) => {
+                        let all = fields();
+                        night.save(&all);
+                        format!("{} added to the plan for the night of {} ({} targets; p shows it)", d.label(), night.date, night.targets.len())
+                    }
+                    Some(d) => format!("{} is already in the plan", d.label()),
+                    None => "Put the crosshair on an object first (/ goes to one)".into(),
+                };
+            }
+            "p" => {
+                let at = moments[index];
+                let mut night = crate::plan::Night::load(crate::plan::night_of(at.year, at.month, at.day, at.hour), place, lat, lon, tz);
+                let all = fields();
+                if let Some(d) = display.as_mut() { d.clear_all(); }
+                if let Some(d) = crate::plan::run(&mut night, &all) {
+                    opts.centre = Some((d.ra, d.dec));
+                    let widest = set.iter().map(|f| f.radius_deg * 2.0).fold(0.0, f64::max);
+                    let span = (d.major / 60.0).max(widest).max(0.3) * 3.0;
+                    opts.zoom = (180.0 / span).clamp(1.5, 400.0);
+                    note = describe(d);
+                }
+            }
             "ENTER" => {
                 note = match under_crosshair(&view, opts.zoom) {
                     Some(d) => describe(d),
@@ -398,7 +424,7 @@ fn draw(
     ));
     out.push_str(&Cursor::at(1, rows));
     out.push_str(&style::dim(&crust::truncate_ansi(
-        " h/l hour · j/k day · arrows move · +/- zoom · / go to · ⏎ what is this · v eyepieces · d objects · 0 whole sky · [/] stars · c · n · q back",
+        " h/l hour · j/k day · arrows move · +/- zoom · / go to · ⏎ what is this · a plan it · p the plan · v eyepieces · d objects · 0 all · [/] stars · q back",
         cols as usize,
     )));
     (out, canvas)

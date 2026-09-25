@@ -151,6 +151,26 @@ the size of its true field of view, round the crosshair, in its own
 colour. Put the crosshair on M31 with `/ M31` and you see at once which
 of your combos frames it.
 
+## Planning and recording a night
+
+In the sky chart, put the crosshair on an object (`/ M57` goes there)
+and press `a`: it joins the plan for that night. A night ends at 08:00,
+so 02:00 belongs to the evening before and 10:00 plans the coming one.
+
+`p` shows the plan. Each target has its best time and how high it gets
+then, when it is above 20°, and which combo in your eyepiece set frames
+it best: the tightest field that holds it with room round it.
+
+At the eyepiece, `o` marks a target seen: pick the combo by number
+(Enter takes the best one) and say what you saw. The time is the clock's.
+The night lives in `~/.astro/nights/<date>.json`, and the same night is
+written as a HyperList log, `<date>.hl`, for scribe. astro writes that
+log again on every change, so notes go in through astro.
+
+The observation log (`Ctrl-O` in Gear mode) lists tonight's best
+deep-sky targets from all 219 objects: those that climb past 30° and
+that your largest tagged telescope can show, brightest first.
+
 ## Cross-mode synergy
 
 The merge unlocks features neither standalone app could:
@@ -202,6 +222,8 @@ The merge unlocks features neither standalone app could:
 | `/` | Go to an object: `M31`, `C14`, `NGC 7000` or part of a name |
 | `ENTER` | What is under the crosshair: kind, magnitude, size, constellation |
 | `v` | The eyepiece set's circles round the crosshair, with a legend |
+| `a` | Add the object under the crosshair to the night's plan |
+| `p` | The night's plan (`o` seen, `u` not seen, `x` remove, `ENTER` go to it) |
 | `d` | The Messier and Caldwell objects on / off |
 | `0` | The whole sky again |
 | `[` / `]` | Fewer / more stars |

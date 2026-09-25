@@ -24,4 +24,9 @@ pub struct SkyEnv {
     pub weather: String,
     /// "Mercury, Venus, Mars, Jupiter, Saturn"
     pub visible_bodies: String,
+    /// Where and when, for tonight's deep-sky targets.
+    pub lat: f64,
+    pub lon: f64,
+    pub tz: f64,
+    pub hour: u32,
 }

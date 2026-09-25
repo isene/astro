@@ -4,6 +4,7 @@ mod date_util;
 mod events;
 mod gear;
 mod images;
+mod plan;
 mod sky;
 mod weather;
 
@@ -918,6 +919,10 @@ impl App {
             moon_summary,
             weather,
             visible_bodies,
+            lat: self.cfg.lat,
+            lon: self.cfg.lon,
+            tz: self.cfg.tz,
+            hour: h.hour as u32,
         }
     }
 

@@ -72,6 +72,40 @@ impl Store {
     }
 }
 
+/// One telescope + eyepiece pair in the eyepiece set: the circles the
+/// sky chart draws with `v`. Kept by name in ~/.astro/combos.json.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Combo {
+    pub scope: String,
+    pub eyepiece: String,
+}
+
+pub fn combos_path() -> PathBuf { astro_dir().join("combos.json") }
+
+pub fn load_combos() -> Vec<Combo> {
+    std::fs::read_to_string(combos_path()).ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_combos(combos: &[Combo]) {
+    let _ = std::fs::create_dir_all(astro_dir());
+    if let Ok(t) = serde_json::to_string_pretty(combos) {
+        let tmp = combos_path().with_extension("json.tmp");
+        if std::fs::write(&tmp, t).is_ok() {
+            let _ = std::fs::rename(&tmp, combos_path());
+        }
+    }
+}
+
+/// The circle colours, one per combo in set order; they repeat past eight.
+pub const COMBO_RGB: [(u8, u8, u8); 8] = [
+    (255, 95, 95), (90, 200, 255), (255, 215, 80), (140, 240, 140),
+    (225, 130, 255), (255, 160, 70), (80, 235, 220), (240, 240, 240),
+];
+
+pub fn combo_rgb(i: usize) -> (u8, u8, u8) { COMBO_RGB[i % COMBO_RGB.len()] }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     #[serde(default = "default_ts_bg")] pub ts_header_bg: String,

@@ -73,6 +73,7 @@ pub fn run(env: super::SkyEnv) -> bool {
             "X" => { app.export_json(); }
             "r" => { app.render_all(); }
             "v" => { app.show_version(); }
+            "f" => { app.toggle_combo(); app.render_all(); }
             _ => {}
         }
         store = app.store.clone();
@@ -112,6 +113,9 @@ struct App {
     /// Snapshot of Sky-mode state at mode-switch time. Drives the
     /// Bortle-aware mag-limit column and observation-log auto-fill.
     env: super::SkyEnv,
+    /// The eyepiece set: telescope + eyepiece pairs drawn as circles in
+    /// the sky chart.
+    combos: Vec<super::data::Combo>,
 }
 
 impl App {
@@ -135,7 +139,30 @@ impl App {
             sort_on: false,
             status: None,
             env: super::SkyEnv::default(),
+            combos: super::data::load_combos(),
         }
+    }
+
+    /// The selected telescope and eyepiece as a combo, if both are chosen.
+    fn current_combo(&self) -> Option<super::data::Combo> {
+        Some(super::data::Combo { scope: self.current_ts()?.name.clone(), eyepiece: self.current_ep()?.name.clone() })
+    }
+
+    /// f: put the selected pair in the eyepiece set, or take it out.
+    fn toggle_combo(&mut self) {
+        let Some(c) = self.current_combo() else {
+            self.status_say(" Select a telescope and an eyepiece first", 208);
+            return;
+        };
+        let msg = if let Some(i) = self.combos.iter().position(|x| *x == c) {
+            self.combos.remove(i);
+            format!(" {} + {} left the eyepiece set", c.scope, c.eyepiece)
+        } else {
+            self.combos.push(c.clone());
+            format!(" {} + {} joined the eyepiece set ({} in it; v in the sky chart shows them)", c.scope, c.eyepiece, self.combos.len())
+        };
+        super::data::save_combos(&self.combos);
+        self.status_say(&msg, 46);
     }
 
     fn build_panes(cols: u16, rows: u16, cfg: &Config)
@@ -250,9 +277,9 @@ impl App {
         let bortle_note = if self.env.bortle > 0.0 {
             format!("   <MGN @ Bortle {:.0}", self.env.bortle)
         } else { String::new() };
-        let left = format!(" astro v{} [Gear]   [{}]   TS: {}   EP: {}   Misc: {}   sort: {}{}",
+        let left = format!(" astro v{} [Gear]   [{}]   TS: {}   EP: {}   Misc: {}   sort: {}   eyepiece set: {}{}",
             VERSION, focus, ts_tag, ep_tag, misc_tag,
-            if self.sort_on { "on" } else { "off" }, bortle_note);
+            if self.sort_on { "on" } else { "off" }, self.combos.len(), bortle_note);
         self.header.say(&style::bold(&left));
     }
 
@@ -421,6 +448,13 @@ impl App {
                 lines.push(format!(" {} {}",
                     style::fg("×", LBL),
                     style::bold(&e.name)));
+                let pair = super::data::Combo { scope: t.name.clone(), eyepiece: e.name.clone() };
+                match self.combos.iter().position(|x| *x == pair) {
+                    Some(i) => lines.push(format!(" {} {}",
+                        style::rgb("●", Some(super::data::combo_rgb(i)), None, ""),
+                        style::fg("in the eyepiece set (f takes it out)", LBL))),
+                    None => lines.push(style::fg(" f adds this pair to the eyepiece set", LBL)),
+                }
                 lines.push(String::new());
 
                 // Magnification — colour the status by zone.
@@ -516,7 +550,7 @@ impl App {
         if let Some((ref msg, color)) = self.status {
             self.footer.say(&style::fg(msg, color));
         } else {
-            let hint = " t:+TS  e:+EP  m:+Misc  ENTER:Edit  TAB:Focus  SPACE:Tag  o:Sort  C-o:Log  x/X:Export  D:Del  ?:Help  q:Quit";
+            let hint = " t:+TS  e:+EP  m:+Misc  ENTER:Edit  TAB:Focus  SPACE:Tag  f:Set  o:Sort  C-o:Log  x/X:Export  D:Del  ?:Help  q:Quit";
             self.footer.say(&style::fg(hint, 245));
         }
     }
@@ -1065,6 +1099,8 @@ impl App {
               o                     Toggle sort (APP / FL)\n\n  \
             TAGS & EXPORT\n  \
               SPACE        Tag / untag (▐ marker appears next to the cursor)\n  \
+              f            Put the telescope + eyepiece in the eyepiece set\n  \
+                           (its circle shows in the sky chart with v)\n  \
               A            Tag all in the focused pane\n  \
               u            Untag all (across every pane)\n  \
               Ctrl-O       Create observation log from tagged equipment.\n  \

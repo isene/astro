@@ -57,7 +57,7 @@ Plan your observations with weather, ephemeris, and events.
 - **Ephemeris table** (RA, Dec, distance, rise, transit, set) for all bodies, computed against the IAU 2006 obliquity standard via [orbit](https://github.com/isene/orbit).
 - **Astronomical events** from the [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed, in-line with the hour bracket.
 - **Tonight summary** fallback when there are no notable events: moon phase + rise/set, planets above the horizon, constellations near the zenith for the date and hemisphere, Bortle hint.
-- **Sky chart** for the selected hour, drawn by [starmap](https://github.com/isene/starmap) in pixels or braille: 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
+- **Sky chart** for the selected hour, drawn by [starmap](https://github.com/isene/starmap) in pixels or braille: 9,096 stars from the Yale Bright Star Catalogue, the constellation figures, the 219 Messier and Caldwell objects at their true size, and the sun, moon and planets where they actually are. Zenith at the centre, horizon at the rim, north up and east left. It sits in the main pane and follows the selected hour; `s` gives it the whole screen. Offline, and the faintest star it plots follows your Bortle setting and the room it has.
 - **Astronomy Picture of the Day** ([NASA APOD](https://apod.nasa.gov/), cached per day).
 - **Inline image display** via kitty / sixel / w3m / chafa.
 - **Julian Date** in the header.
@@ -142,6 +142,15 @@ The five suitability columns are mutually exclusive — exactly one ✓ per row,
 | Factor | Magnification multiplier for barlows / reducers (e.g. `2.0` for a 2× barlow, `0.5` for a 0.5× reducer); `-` when not applicable |
 | Notes | Free-text notes |
 
+## The eyepiece set
+
+In Gear mode, select a telescope and an eyepiece and press `f`: the pair
+joins the eyepiece set, saved in `~/.astro/combos.json`. Add as many as
+you like. In the full-screen sky chart, `v` draws each one as a circle
+the size of its true field of view, round the crosshair, in its own
+colour. Put the crosshair on M31 with `/ M31` and you see at once which
+of your combos frames it.
+
 ## Cross-mode synergy
 
 The merge unlocks features neither standalone app could:
@@ -166,7 +175,7 @@ The merge unlocks features neither standalone app could:
 | `PgUP` / `PgDOWN`, `K` / `J` | Page |
 | `HOME` / `END` | First / last hour |
 | `e` | Show all upcoming astronomical events |
-| `s` | Sky chart full screen (`←`/`→` hour, `↑`/`↓` day, `c` lines, `n` names, `+`/`-` magnitude, `q` back) |
+| `s` | Sky chart full screen; its keys are below |
 | `A` | Astronomy Picture of the Day (covers the chart; `ESC` puts the sky back) |
 | `ENTER` | Refresh current image |
 | `r` | Redraw all panes |
@@ -181,6 +190,23 @@ The merge unlocks features neither standalone app could:
 | `W` | Save config to `~/.astro/config.yml` |
 | `ESC` | Reset status line |
 | `q` / `Q` | Quit |
+
+## Sky chart keys
+
+| Key | Action |
+|---|---|
+| `h` / `l` | An hour back / on |
+| `j` / `k` | A day on / back |
+| arrows | Move the crosshair over the sky; the view follows it through the hours |
+| `+` / `-` | Zoom in / out |
+| `/` | Go to an object: `M31`, `C14`, `NGC 7000` or part of a name |
+| `ENTER` | What is under the crosshair: kind, magnitude, size, constellation |
+| `v` | The eyepiece set's circles round the crosshair, with a legend |
+| `d` | The Messier and Caldwell objects on / off |
+| `0` | The whole sky again |
+| `[` / `]` | Fewer / more stars |
+| `c` / `n` | Constellation lines / names |
+| `q` | Back |
 
 ## Gear-mode keys
 
@@ -197,6 +223,7 @@ The merge unlocks features neither standalone app could:
 | `Shift-UP` / `Shift-DOWN` | Reorder |
 | `HOME` / `END` | Jump to start / end |
 | `SPACE` | Tag / untag |
+| `f` | Put the selected telescope + eyepiece in the eyepiece set, or take it out |
 | `A` | Tag all |
 | `u` | Untag all |
 | `o` | Toggle sort (APP / FL) |

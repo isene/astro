@@ -77,6 +77,7 @@ pub fn run(env: super::SkyEnv) -> bool {
             "r" => { app.render_all(); }
             "v" => { app.show_version(); }
             "f" => { app.toggle_combo(); app.render_all(); }
+            "F" => { app.show_set(); }
             _ => {}
         }
         store = app.store.clone();
@@ -166,6 +167,56 @@ impl App {
         };
         super::data::save_combos(&self.combos);
         self.status_say(&msg, 46);
+    }
+
+    /// F: the eyepiece set as a list; x takes the selected pair out.
+    fn show_set(&mut self) {
+        let (cols, rows) = Crust::terminal_size();
+        let mut sel = 0usize;
+        loop {
+            if self.combos.is_empty() {
+                break;
+            }
+            sel = sel.min(self.combos.len() - 1);
+            let mut lines = vec![String::new(), style::bold(" The eyepiece set (v in the sky chart draws these)"), String::new()];
+            for (i, c) in self.combos.iter().enumerate() {
+                let t = self.store.telescopes.iter().find(|t| t.name == c.scope);
+                let e = self.store.eyepieces.iter().find(|e| e.name == c.eyepiece);
+                let fov = match (t, e) {
+                    (Some(t), Some(e)) => format!("{:.0}×  {:.2}°", optics::magx(t.tfl, e.fl), optics::tfov(t.tfl, e.fl, e.afov)),
+                    _ => "no longer in the catalog".into(),
+                };
+                let pair = format!("{} + {}   {}", c.scope, c.eyepiece, fov);
+                lines.push(format!(" {} {} {}",
+                    if i == sel { "▶" } else { " " },
+                    style::rgb("●", Some(super::data::combo_rgb(i)), None, ""),
+                    if i == sel { style::bold(&pair) } else { pair }));
+            }
+            lines.push(String::new());
+            lines.push(style::fg(" j/k move · x take out · q close", 245));
+            let w = cols.saturating_sub(8).min(80);
+            let h = (lines.len() as u16).min(rows.saturating_sub(4));
+            let mut popup = crust::Popup::centered(w, h, 252, 234);
+            popup.pane.wrap = false;
+            popup.show(&lines.join("\n"));
+            let Some(key) = Input::getchr(None) else { continue };
+            match key.as_str() {
+                "j" | "DOWN" => sel += 1,
+                "k" | "UP" => sel = sel.saturating_sub(1),
+                "x" | "D" => {
+                    self.combos.remove(sel);
+                    super::data::save_combos(&self.combos);
+                    // A shorter list leaves the old popup's last rows behind.
+                    self.repaint();
+                }
+                "q" | "ESC" | "F" | "ENTER" => break,
+                _ => {}
+            }
+        }
+        if self.combos.is_empty() {
+            self.status = Some((" The eyepiece set is empty: select a telescope and an eyepiece, then f".into(), 208));
+        }
+        self.repaint();
     }
 
     fn build_panes(cols: u16, rows: u16, cfg: &Config)
@@ -553,7 +604,7 @@ impl App {
         if let Some((ref msg, color)) = self.status {
             self.footer.say(&style::fg(msg, color));
         } else {
-            let hint = " t:+TS  e:+EP  m:+Misc  ENTER:Edit  TAB:Focus  SPACE:Tag  f:Set  o:Sort  C-o:Log  x/X:Export  D:Del  ?:Help  q:Quit";
+            let hint = " t:+TS  e:+EP  m:+Misc  ENTER:Edit  TAB:Focus  SPACE:Tag  f/F:Set  o:Sort  C-o:Log  x/X:Export  D:Del  ?:Help  q:Quit";
             self.footer.say(&style::fg(hint, 245));
         }
     }
@@ -1102,6 +1153,7 @@ impl App {
               SPACE        Tag / untag (▐ marker appears next to the cursor)\n  \
               f            Put the telescope + eyepiece in the eyepiece set\n  \
                            (its circle shows in the sky chart with v)\n  \
+              F            List the eyepiece set; x takes a pair out\n  \
               A            Tag all in the focused pane\n  \
               u            Untag all (across every pane)\n  \
               Ctrl-O       Create observation log from tagged equipment.\n  \
@@ -1131,8 +1183,12 @@ impl App {
         let h = rows.saturating_sub(4).min(36);
         let mut popup = crust::Popup::centered(w, h, 252, 234);
         popup.view(&help);
-        // Wipe the screen so the popup border and any content sitting
-        // in the gaps between panes is removed.
+        self.repaint();
+    }
+
+    /// Redraw everything after a popup. Wipe the screen first so the
+    /// popup border and anything in the gaps between panes is removed.
+    fn repaint(&mut self) {
         Crust::clear_screen();
         self.header.full_refresh();
         self.ts_head.full_refresh();

@@ -149,7 +149,8 @@ joins the eyepiece set, saved in `~/.astro/combos.json`. Add as many as
 you like. In the full-screen sky chart, `v` draws each one as a circle
 the size of its true field of view, round the crosshair, in its own
 colour. Put the crosshair on M31 with `/ M31` and you see at once which
-of your combos frames it.
+of your combos frames it. `F` in Gear mode lists the set, and `x` there
+takes a pair out.
 
 ## Planning and recording a night
 
@@ -246,6 +247,7 @@ The merge unlocks features neither standalone app could:
 | `HOME` / `END` | Jump to start / end |
 | `SPACE` | Tag / untag |
 | `f` | Put the selected telescope + eyepiece in the eyepiece set, or take it out |
+| `F` | List the eyepiece set; `x` takes the selected pair out |
 | `A` | Tag all |
 | `u` | Untag all |
 | `o` | Toggle sort (APP / FL) |

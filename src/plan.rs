@@ -295,7 +295,7 @@ fn draw(night: &Night, set: &[Field], sel: usize, note: &str, cols: u16, rows: u
     let seen = night.targets.iter().filter(|t| t.seen.is_some()).count();
     let title = format!(" The night of {} at {} · {} targets, {} seen", night.date, night.place, night.targets.len(), seen);
     out.push_str(&Cursor::at(1, 1));
-    out.push_str(&style::rgb(&crust::truncate_ansi(&title, cols as usize), Some((255, 200, 120)), None, "b"));
+    out.push_str(&crate::sky::bar(&title, cols, (255, 200, 120), "b"));
     let mut y = 3u16;
     if night.targets.is_empty() {
         out.push_str(&Cursor::at(3, y));
@@ -332,9 +332,11 @@ fn draw(night: &Night, set: &[Field], sel: usize, note: &str, cols: u16, rows: u
         out.push_str(&style::rgb(&format!(" {note}"), Some((230, 230, 235)), None, ""));
     }
     out.push_str(&Cursor::at(1, rows));
-    out.push_str(&crate::sky::key_bar(
+    out.push_str(&crate::sky::bar(
         &format!(" j/k move · o seen · u not seen · x remove · ⏎ go to it · q back   log: ~/.astro/nights/{}.hl", night.date),
         cols,
+        (215, 215, 220),
+        "",
     ));
     print!("{out}");
     std::io::stdout().flush().ok();

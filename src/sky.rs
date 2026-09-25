@@ -421,25 +421,22 @@ fn draw(
         sky_state, planets, opts.inner.mag, zoomed,
     );
     out.push_str(&Cursor::at(1, 1));
-    out.push_str(&style::rgb(
-        &crust::truncate_ansi(&title, cols as usize),
-        Some((255, 200, 120)),
-        None,
-        "b",
-    ));
+    out.push_str(&bar(&title, cols, (255, 200, 120), "b"));
     out.push_str(&Cursor::at(1, rows));
-    out.push_str(&key_bar(
+    out.push_str(&bar(
         " h/l hour · j/k day · arrows move · +/- zoom · / go to · ⏎ what is this · a plan it · p the plan · v eyepieces · d objects · 0 all · [/] stars · q back",
         cols,
+        (215, 215, 220),
+        "",
     ));
     (out, canvas)
 }
 
-/// The key legend on the last row, on a grey bar so it stands apart
-/// from the note above it.
-pub fn key_bar(keys: &str, cols: u16) -> String {
-    let t: String = keys.chars().take(cols as usize).collect();
-    style::rgb(&crust::pad_display(&t, cols as usize), Some((215, 215, 220)), Some((60, 60, 66)), "")
+/// A full-width row on a dark grey bar: the title at the top and the
+/// key legend at the bottom, set apart from the chart and the note.
+pub fn bar(text: &str, cols: u16, fg: (u8, u8, u8), attrs: &str) -> String {
+    let t: String = text.chars().take(cols as usize).collect();
+    style::rgb(&crust::pad_display(&t, cols as usize), Some(fg), Some((60, 60, 66)), attrs)
 }
 
 #[cfg(test)]

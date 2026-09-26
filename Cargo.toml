@@ -1,6 +1,6 @@
 [package]
 name = "astro"
-version = "0.1.25"
+version = "0.1.26"
 edition = "2021"
 authors = ["Geir Isene <g@isene.com>"]
 description = "Comprehensive amateur astronomy app: sky panel + telescope/eyepiece catalog. Merger of nova and scope. Built on crust."
@@ -14,6 +14,8 @@ orbit = { version = "0.1.5", path = "../orbit", package = "fe2o3-orbit" }
 starmap = { version = "0.1", path = "../starmap", package = "fe2o3-starmap" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The same image crate glow builds, for turning and fitting a picture.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde_yaml = "0.9"
 ureq = { version = "2", features = ["tls", "json"] }
 libc = "0.2"

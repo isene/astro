@@ -22,6 +22,8 @@ pub struct Opts {
     pan: (f64, f64),
     /// Draw the eyepiece set's circles round the crosshair.
     pub circles: bool,
+    /// How an object's picture is turned: eye, telescope, star diagonal.
+    pub flip: crate::photo::Flip,
 }
 
 impl Opts {
@@ -34,6 +36,7 @@ impl Opts {
             centre: None,
             pan: (0.0, 0.0),
             circles: false,
+            flip: crate::photo::Flip::Eye,
         }
     }
 }
@@ -197,6 +200,8 @@ pub fn run(
     let pixels = display.get_or_insert_with(glow::Display::new).supported();
     let mut set = if opts.circles { fields() } else { Vec::new() };
     let mut note = String::new();
+    // The object the note describes: Enter again shows its picture.
+    let mut described: Option<&'static starmap::Dso> = None;
     loop {
         let (cols, rows) = Crust::terminal_size();
         Crust::clear_screen();
@@ -210,6 +215,7 @@ pub fn run(
         }
 
         let Some(key) = Input::getchr(None) else { continue };
+        let shown = described.take();
         let (view, _) = looking(moments[index], lat, lon, tz, opts);
         // Arrows walk the crosshair a tenth of the screen at a time.
         let walk = |dx: f64, dy: f64, opts: &mut Opts| {
@@ -268,13 +274,14 @@ pub fn run(
                 p.scroll = false;
                 let asked = p.ask_or_cancel(" Go to (M31, C14, NGC 7000, a name): ", "").unwrap_or_default();
                 if let Some(d) = find(&asked) {
+                    described = Some(d);
                     opts.centre = Some((d.ra, d.dec));
                     // Close in until the object, or the widest eyepiece
                     // circle, fills about a third of the screen height.
                     let widest = set.iter().map(|f| f.radius_deg * 2.0).fold(0.0, f64::max);
                     let span = (d.major / 60.0).max(widest).max(0.3) * 3.0;
                     opts.zoom = (180.0 / span).clamp(1.5, 400.0);
-                    note = describe(d);
+                    note = format!("{}   (⏎ again: its picture)", describe(d));
                 } else if !asked.trim().is_empty() {
                     note = format!("No Messier or Caldwell object called {}", asked.trim());
                 }
@@ -298,19 +305,33 @@ pub fn run(
                 let all = fields();
                 if let Some(d) = display.as_mut() { d.clear_all(); }
                 if let Some(d) = crate::plan::run(&mut night, &all) {
+                    described = Some(d);
                     opts.centre = Some((d.ra, d.dec));
                     let widest = set.iter().map(|f| f.radius_deg * 2.0).fold(0.0, f64::max);
                     let span = (d.major / 60.0).max(widest).max(0.3) * 3.0;
                     opts.zoom = (180.0 / span).clamp(1.5, 400.0);
-                    note = describe(d);
+                    note = format!("{}   (⏎ again: its picture)", describe(d));
                 }
             }
-            "ENTER" => {
-                note = match under_crosshair(&view, opts.zoom) {
-                    Some(d) => describe(d),
-                    None => "No Messier or Caldwell object under the crosshair".into(),
-                };
-            }
+            "ENTER" => match shown {
+                // Enter again: the object's picture, in a box over the chart.
+                Some(d) => {
+                    if let Some(disp) = display.as_mut() { disp.clear_all(); }
+                    match crate::photo::show(d, opts.flip) {
+                        Ok(flip) => opts.flip = flip,
+                        Err(e) => note = e,
+                    }
+                }
+                None => {
+                    note = match under_crosshair(&view, opts.zoom) {
+                        Some(d) => {
+                            described = Some(d);
+                            format!("{}   (⏎ again: its picture)", describe(d))
+                        }
+                        None => "No Messier or Caldwell object under the crosshair".into(),
+                    };
+                }
+            },
             _ => {}
         }
     }

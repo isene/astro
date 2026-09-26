@@ -222,6 +222,7 @@ The merge unlocks features neither standalone app could:
 | `+` / `-` | Zoom in / out |
 | `/` | Go to an object: `M31`, `C14`, `NGC 7000` or part of a name |
 | `ENTER` | What is under the crosshair: kind, magnitude, size, constellation |
+| `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/dso/` |
 | `v` | The eyepiece set's circles round the crosshair, with a legend |
 | `a` | Add the object under the crosshair to the night's plan |
 | `p` | The night's plan (`o` seen, `u` not seen, `x` remove, `ENTER` go to it) |

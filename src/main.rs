@@ -4,6 +4,7 @@ mod date_util;
 mod events;
 mod gear;
 mod images;
+mod photo;
 mod plan;
 mod sky;
 mod weather;

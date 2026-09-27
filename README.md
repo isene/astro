@@ -223,6 +223,8 @@ The merge unlocks features neither standalone app could:
 | `/` | Go to an object: `M31`, `C14`, `NGC 7000` or part of a name |
 | `ENTER` | What is under the crosshair: kind, magnitude, size, constellation |
 | `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/dso/` |
+| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object |
+| `e` in the eyepiece view | The next combination of your eyepiece set |
 | `v` | The eyepiece set's circles round the crosshair, with a legend |
 | `a` | Add the object under the crosshair to the night's plan |
 | `p` | The night's plan (`o` seen, `u` not seen, `x` remove, `ENTER` go to it) |
@@ -231,6 +233,17 @@ The merge unlocks features neither standalone app could:
 | `[` / `]` | Fewer / more stars |
 | `c` / `n` | Constellation lines / names |
 | `q` | Back |
+
+### The eyepiece view
+
+Photos of deep-sky objects show far more than any eye at a telescope. `r` shows the object as your eyepiece does instead.
+
+- The sky comes from the Digitized Sky Survey (DSS2), through the CDS image service. It is cut to the true field of a combination from your eyepiece set, first the one that frames the object best.
+- Only the part the eye catches stays: less as the telescope shrinks, less under a brighter Bortle sky. Stars stay points, down to what the telescope reaches.
+- Grey, never white, inside a round field stop.
+- With no eyepiece set, astro shows a 100 mm telescope with a field three times the object's size.
+
+It is a model of the view, not a photo of it. The plates are kept in `~/.astro/images/dso/`.
 
 ## Gear-mode keys
 

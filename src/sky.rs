@@ -24,6 +24,10 @@ pub struct Opts {
     pub circles: bool,
     /// How an object's picture is turned: eye, telescope, star diagonal.
     pub flip: crate::photo::Flip,
+    /// Show an object as the eyepiece shows it, not as a photo.
+    pub real: bool,
+    /// The sky's Bortle class, for how much of a faint object shows.
+    pub bortle: f64,
 }
 
 impl Opts {
@@ -37,6 +41,8 @@ impl Opts {
             pan: (0.0, 0.0),
             circles: false,
             flip: crate::photo::Flip::Eye,
+            real: false,
+            bortle,
         }
     }
 }
@@ -46,6 +52,9 @@ pub struct Field {
     pub label: String,
     pub rgb: (u8, u8, u8),
     pub radius_deg: f64,
+    /// The telescope's aperture, in millimetres, and the magnification.
+    pub aperture: f64,
+    pub power: f64,
 }
 
 /// The eyepiece set as circles, from ~/.astro/combos.json and the gear
@@ -63,6 +72,8 @@ pub fn fields() -> Vec<Field> {
                 label: format!("{} + {}  {:.0}×  {:.2}°", t.name, e.name, optics::magx(t.tfl, e.fl), tfov),
                 rgb: data::combo_rgb(i),
                 radius_deg: tfov / 2.0,
+                aperture: t.app,
+                power: optics::magx(t.tfl, e.fl),
             })
         })
         .collect()
@@ -317,8 +328,8 @@ pub fn run(
                 // Enter again: the object's picture, in a box over the chart.
                 Some(d) => {
                     if let Some(disp) = display.as_mut() { disp.clear_all(); }
-                    match crate::photo::show(d, opts.flip) {
-                        Ok(flip) => opts.flip = flip,
+                    match crate::photo::show(d, opts.flip, opts.real, opts.bortle) {
+                        Ok((flip, real)) => { opts.flip = flip; opts.real = real; }
                         Err(e) => note = e,
                     }
                 }

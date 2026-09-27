@@ -1056,7 +1056,7 @@ impl App {
     fn prompt_bortle(&mut self) {
         let s = self.footer.ask("Bortle? (1..9) ", &self.cfg.bortle.to_string());
         if let Ok(v) = s.trim().parse::<f64>() {
-            if (1.0..=9.0).contains(&v) { self.cfg.bortle = v; }
+            if (1.0..=9.0).contains(&v) { self.cfg.bortle = v; self.sky_opts.bortle = v; }
         }
     }
 }

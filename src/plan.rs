@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn the_best_combo_frames_with_room() {
-        let f = |r: f64| Field { label: format!("{r}"), rgb: (0, 0, 0), radius_deg: r };
+        let f = |r: f64| Field { label: format!("{r}"), rgb: (0, 0, 0), radius_deg: r, aperture: 100.0, power: 50.0 };
         let set = vec![f(0.4), f(0.78), f(0.97)];
         let m57 = starmap::dsos().iter().find(|d| d.id == "M57").unwrap();
         assert_eq!(best_field(m57, &set).unwrap().label, "0.4", "a small object gets the tightest field");

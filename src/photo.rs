@@ -5,9 +5,14 @@
 //!
 //! Each picture is fetched once, at 1200 pixels wide, and kept in
 //! ~/.astro/images/dso/, so looking again costs no network.
+//!
+//! `r` swaps the photo for the eyepiece view: a plate of the Digitized
+//! Sky Survey cut to what the eyepiece shows, grey and dimmed the way
+//! the eye sees a faint object through that telescope.
 
+use crate::sky::Field;
 use crust::{Crust, Input, Popup};
-use image::{imageops::FilterType, DynamicImage};
+use image::{imageops::FilterType, DynamicImage, GrayImage, Luma};
 use starmap::Dso;
 use std::io::Read;
 use std::path::PathBuf;
@@ -118,6 +123,175 @@ fn picture(d: &Dso) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The CDS image service cuts a plate of any size and field out of the
+/// Digitized Sky Survey (DSS2, the red plates): north up, east left. It
+/// comes as FITS, the scanned density of each pixel, since the survey's
+/// JPEG burns every bright core to plain white.
+const SURVEY_PX: u32 = 800;
+
+fn survey_path(d: &Dso, fov: f64) -> PathBuf {
+    cache_path(d).with_file_name(format!("{}-dss-{:.0}.fits", d.id, fov * 60.0))
+}
+
+/// A survey plate: one value per pixel, the top row first.
+pub struct Plate {
+    w: u32,
+    h: u32,
+    px: Vec<f32>,
+}
+
+/// The first image in a FITS file: 80-character header cards in blocks
+/// of 2880 bytes, then big-endian pixels with the bottom row first.
+fn read_fits(b: &[u8]) -> Result<Plate, String> {
+    let card = |i: usize| std::str::from_utf8(&b[i * 80..i * 80 + 80]).unwrap_or("");
+    let (mut bitpix, mut w, mut h, mut zero, mut scale) = (0i64, 0usize, 0usize, 0f64, 1f64);
+    let mut i = 0;
+    loop {
+        if (i + 1) * 80 > b.len() {
+            return Err("the survey plate has no end to its header".into());
+        }
+        let c = card(i);
+        i += 1;
+        if c.len() < 8 {
+            continue;
+        }
+        if c.starts_with("END") && c[3..].trim().is_empty() {
+            break;
+        }
+        let value = c.get(10..).unwrap_or("").split('/').next().unwrap_or("").trim();
+        match c[..8].trim() {
+            "BITPIX" => bitpix = value.parse().unwrap_or(0),
+            "NAXIS1" => w = value.parse().unwrap_or(0),
+            "NAXIS2" => h = value.parse().unwrap_or(0),
+            "BZERO" => zero = value.parse().unwrap_or(0.0),
+            "BSCALE" => scale = value.parse().unwrap_or(1.0),
+            _ => {}
+        }
+    }
+    let start = (i * 80).div_ceil(2880) * 2880;
+    let size = (bitpix.unsigned_abs() / 8) as usize;
+    if w == 0 || h == 0 || !matches!(bitpix, 16 | 32 | -32) || b.len() < start + w * h * size {
+        return Err("the survey plate is not an image astro reads".into());
+    }
+    let at = |k: usize| {
+        let q = &b[start + k * size..start + (k + 1) * size];
+        let raw = match bitpix {
+            16 => i16::from_be_bytes([q[0], q[1]]) as f64,
+            32 => i32::from_be_bytes([q[0], q[1], q[2], q[3]]) as f64,
+            _ => f32::from_be_bytes([q[0], q[1], q[2], q[3]]) as f64,
+        };
+        (zero + scale * raw) as f32
+    };
+    let mut px = Vec::with_capacity(w * h);
+    for row in (0..h).rev() {
+        px.extend((0..w).map(|x| at(row * w + x)));
+    }
+    Ok(Plate { w: w as u32, h: h as u32, px })
+}
+
+/// The survey plate of `d`, `fov` degrees across: kept, else fetched.
+fn survey(d: &Dso, fov: f64) -> Result<Vec<u8>, String> {
+    let path = survey_path(d, fov);
+    if let Ok(b) = std::fs::read(&path) {
+        if !b.is_empty() {
+            return Ok(b);
+        }
+    }
+    let url = format!(
+        "https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=CDS%2FP%2FDSS2%2Fred&width={SURVEY_PX}&height={SURVEY_PX}&fov={fov:.4}&projection=TAN&coordsys=icrs&ra={:.5}&dec={:.5}&format=fits",
+        d.ra, d.dec
+    );
+    let mut bytes = Vec::new();
+    ureq::get(&url).set("User-Agent", AGENT).timeout(Duration::from_secs(30)).call()
+        .map_err(|e| format!("the sky survey would not answer: {e}"))?
+        .into_reader().take(8 << 20).read_to_end(&mut bytes)
+        .map_err(|e| format!("the survey plate broke off: {e}"))?;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, &bytes);
+    Ok(bytes)
+}
+
+/// The eyepiece to look at `d` through: the set's combo with the
+/// smallest field that still holds the object with room round it, else
+/// the widest one.
+fn best_field(fields: &[Field], d: &Dso) -> usize {
+    let want = d.major / 60.0 * 1.5;
+    let mut order: Vec<usize> = (0..fields.len()).collect();
+    order.sort_by(|&a, &b| fields[a].radius_deg.total_cmp(&fields[b].radius_deg));
+    order.iter().copied().find(|&i| fields[i].radius_deg * 2.0 >= want).or(order.last().copied()).unwrap_or(0)
+}
+
+/// A stand-in when the eyepiece set is empty: a 100 mm telescope with a
+/// field three times the object's size.
+fn stand_in(d: &Dso) -> Field {
+    let fov = (d.major / 60.0 * 3.0).clamp(0.5, 4.0);
+    Field {
+        label: format!("no eyepiece set (f in Gear mode): 100 mm, {fov:.1}°"),
+        rgb: (0, 0, 0),
+        radius_deg: fov / 2.0,
+        aperture: 100.0,
+        power: 0.0,
+    }
+}
+
+/// The eyepiece view's line: the telescope, the power and the field.
+fn field_note(f: &Field) -> String {
+    if f.power > 0.0 {
+        format!("{:.0} mm  {:.0}×  {:.2}°", f.aperture, f.power, f.radius_deg * 2.0)
+    } else {
+        f.label.clone()
+    }
+}
+
+/// A survey plate as the eye sees it at the eyepiece. A plate's density
+/// grows with the log of the light, as the eye's sense of brightness
+/// does, from the sky up to where the plate burns out. The plate shows
+/// far fainter light than any eye; what is left is the part above a
+/// threshold that falls as the telescope grows and rises as the sky
+/// brightens. Stars stay points, down to what the telescope reaches.
+/// Then grey, never white, inside the round field stop.
+///
+/// A model of the view, not a measurement of it.
+pub fn eyepiece_view(plate: &Plate, aperture: f64, bortle: f64) -> DynamicImage {
+    let (w, h) = (plate.w, plate.h);
+    let mut vals: Vec<f32> = plate.px.iter().copied().filter(|v| v.is_finite()).collect();
+    if vals.is_empty() {
+        return DynamicImage::ImageLuma8(GrayImage::new(w, h));
+    }
+    let n = vals.len();
+    let sky = *vals.select_nth_unstable_by(n / 2, f32::total_cmp).1 as f64;
+    let full = (*vals.select_nth_unstable_by(n - 1 - n / 1000, f32::total_cmp).1 as f64).max(sky + 1.0);
+    // The eye needs area: softening before the cut drops the faint stars
+    // and keeps the faint glow round a galaxy.
+    let v: image::ImageBuffer<Luma<f32>, Vec<f32>> = image::ImageBuffer::from_fn(w, h, |x, y| {
+        let p = plate.px[(y * w + x) as usize];
+        Luma([if p.is_finite() { ((p as f64 - sky) / (full - sky)).clamp(0.0, 1.0) as f32 } else { 0.0 }])
+    });
+    let v = image::imageops::blur(&v, w as f32 / 300.0);
+    let t = (0.16 - 0.12 * (aperture.max(20.0) / 150.0).log10() + 0.02 * (bortle - 4.0)).clamp(0.04, 0.6);
+    // Stars stay points. Only the densest show, and fewer as the
+    // telescope shrinks: a bright star burns the plate to the top.
+    let star_cut = (0.8 - 0.25 * (aperture.max(20.0) / 150.0).log10() + 0.02 * (bortle - 4.0)).clamp(0.5, 0.97);
+    let mut soft = GrayImage::from_fn(w, h, |x, y| {
+        let glow = ((v.get_pixel(x, y)[0] as f64 - t) / (1.0 - t)).clamp(0.0, 1.0);
+        let p = plate.px[(y * w + x) as usize];
+        let raw = if p.is_finite() { (p as f64 - sky) / (full - sky) } else { 0.0 };
+        let star = ((raw - star_cut) / (1.0 - star_cut)).clamp(0.0, 1.0);
+        Luma([(glow.max(star) * 190.0) as u8])
+    });
+    soft = image::imageops::blur(&soft, w as f32 / 1000.0);
+    // The sky in the field is never quite black, and paler in a brighter
+    // sky; outside the field stop it is.
+    let sky_grey = (4.0 + 2.0 * bortle.clamp(1.0, 9.0)) as u8;
+    let (cx, cy, r) = (w as f64 / 2.0, h as f64 / 2.0, w.min(h) as f64 / 2.0);
+    for (x, y, p) in soft.enumerate_pixels_mut() {
+        p[0] = if (x as f64 + 0.5 - cx).hypot(y as f64 + 0.5 - cy) > r { 0 } else { p[0].max(sky_grey) };
+    }
+    DynamicImage::ImageLuma8(soft)
+}
+
 /// The picture turned by `flip` and fitted, whole, into a canvas of
 /// `cols` by `rows` cells, in the middle on black.
 fn fit(img: &DynamicImage, flip: Flip, cols: u16, rows: u16, cell: Option<(u16, u16)>) -> glow::Canvas {
@@ -131,10 +305,11 @@ fn fit(img: &DynamicImage, flip: Flip, cols: u16, rows: u16, cell: Option<(u16, 
     canvas
 }
 
-/// Show `d`'s picture in a box in the middle of the screen until q, Esc
-/// or Enter; `f` turns it. Gives back the turn, so the next picture
-/// keeps it.
-pub fn show(d: &Dso, mut flip: Flip) -> Result<Flip, String> {
+/// Show `d` in a box in the middle of the screen until q, Esc or Enter:
+/// its photo, or with `real` the eyepiece view. `f` turns it, `r` swaps
+/// the two, `e` steps through the eyepiece set. Gives back the turn and
+/// the choice, so the next object keeps them.
+pub fn show(d: &Dso, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Flip, bool), String> {
     let mut display = glow::Display::new();
     if !display.supported() {
         return Err("this terminal shows no pictures".into());
@@ -151,31 +326,54 @@ pub fn show(d: &Dso, mut flip: Flip) -> Result<Flip, String> {
         lines.push(foot.to_string());
         lines.join("\n")
     };
-    popup.show(&text(" fetching the picture from Wikipedia …"));
 
-    let result = picture(d).and_then(|bytes| {
-        image::load_from_memory(&bytes).map_err(|e| format!("the picture of {} is unreadable: {e}", d.id))
-    });
-    let img = match result {
-        Ok(i) => i,
-        Err(e) => {
-            popup.dismiss(&mut []);
-            return Err(e);
-        }
-    };
+    let mut fields = crate::sky::fields();
+    if fields.is_empty() {
+        fields.push(stand_in(d));
+    }
+    let mut pick = best_field(&fields, d);
+    let mut photo: Option<Result<DynamicImage, String>> = None;
+    let mut plates: Vec<Option<Result<DynamicImage, String>>> = (0..fields.len()).map(|_| None).collect();
     let (x, y) = (popup.pane.x, popup.pane.y + 1);
     loop {
-        popup.show(&text(&format!(" f  {}    q  close    picture: Wikipedia", flip.label())));
-        display.swap_canvas(&fit(&img, flip, w, h.saturating_sub(2), None), x, y);
+        let loaded = if real {
+            let f = &fields[pick];
+            plates[pick].get_or_insert_with(|| {
+                popup.show(&text(" fetching the sky survey plate …"));
+                survey(d, f.radius_deg * 2.0)
+                    .and_then(|b| read_fits(&b))
+                    .map(|plate| eyepiece_view(&plate, f.aperture, bortle))
+            })
+        } else {
+            photo.get_or_insert_with(|| {
+                popup.show(&text(" fetching the picture from Wikipedia …"));
+                picture(d).and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", d.id)))
+            })
+        };
+        let foot = match (&loaded, real) {
+            (Err(e), _) => format!(" {e}    r  {}    q  close", if real { "photo" } else { "eyepiece view" }),
+            (Ok(_), true) => format!(
+                " f  {}    r  photo    e  next eyepiece    q  close    {}    sky: DSS2 via CDS",
+                flip.label(), field_note(&fields[pick])
+            ),
+            (Ok(_), false) => format!(" f  {}    r  eyepiece view    q  close    picture: Wikipedia", flip.label()),
+        };
+        popup.show(&text(&foot));
+        match loaded {
+            Ok(img) => { display.swap_canvas(&fit(img, flip, w, h.saturating_sub(2), None), x, y); }
+            Err(_) => display.clear(x, y, w, h.saturating_sub(2), cols, rows),
+        }
         match Input::getchr(None).as_deref() {
             Some("f") => flip = flip.next(),
+            Some("r") => real = !real,
+            Some("e") if real => pick = (pick + 1) % fields.len(),
             Some("q") | Some("ESC") | Some("ENTER") | None => break,
             _ => {}
         }
     }
     display.clear(popup.pane.x, popup.pane.y, w, h, cols, rows);
     popup.dismiss(&mut []);
-    Ok(flip)
+    Ok((flip, real))
 }
 
 #[cfg(test)]
@@ -221,6 +419,64 @@ mod tests {
             std::fs::write(format!("{dir}/m31-{name}.png"), c.png()).unwrap();
         }
         assert!(cache_path(dso("M31")).exists(), "kept for next time");
+    }
+
+    /// Fetches from CDS: `ASTRO_PHOTO_DUMP=dir cargo test -- --ignored eyepiece`
+    /// writes eyepiece views of a few objects through a 150 mm, 50× set.
+    #[test]
+    #[ignore]
+    fn fetch_and_dim_real_plates() {
+        let Ok(dir) = std::env::var("ASTRO_PHOTO_DUMP") else { return };
+        for id in ["M51", "M13", "M42", "M57", "M31", "M1"] {
+            let bytes = survey(dso(id), 2.0).expect("fetched");
+            let plate = read_fits(&bytes).expect("reads");
+            for ap in [80.0, 150.0, 300.0] {
+                let view = eyepiece_view(&plate, ap, 4.0);
+                view.save(format!("{dir}/{id}-{ap:.0}mm.png")).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn a_bigger_telescope_shows_more_and_the_field_is_round() {
+        // A plate with a sky of 2000 and a smooth glow up to 24,000.
+        let px = (0..200 * 200)
+            .map(|k| { let x = k % 200; if x < 100 { 2000.0 } else { 2000.0 + (x - 100) as f32 * 220.0 } })
+            .collect();
+        let plate = Plate { w: 200, h: 200, px };
+        let lit = |ap: f64| eyepiece_view(&plate, ap, 4.0).to_luma8().pixels().filter(|p| p[0] > 20).count();
+        assert!(lit(300.0) > lit(80.0), "more of the glow shows in a bigger telescope");
+        let v = eyepiece_view(&plate, 300.0, 4.0).to_luma8();
+        assert_eq!(v.get_pixel(199, 0)[0], 0, "outside the field stop is black");
+        assert!(v.pixels().all(|p| p[0] <= 200), "the eye never sees white");
+    }
+
+    #[test]
+    fn a_fits_plate_reads_with_the_bottom_row_last() {
+        let mut f = Vec::new();
+        for c in ["SIMPLE  =                    T", "BITPIX  =                   16", "NAXIS   =                    2",
+                  "NAXIS1  =                    2", "NAXIS2  =                    2", "BZERO   =                32768", "END"] {
+            f.extend(format!("{c:<80}").bytes());
+        }
+        f.resize(2880, b' ');
+        // Stored bottom row first: 1 2, then 3 4; each less 32768.
+        for v in [1i32, 2, 3, 4] {
+            f.extend(((v - 32768) as i16).to_be_bytes());
+        }
+        let p = read_fits(&f).unwrap();
+        assert_eq!((p.w, p.h), (2, 2));
+        assert_eq!(p.px, [3.0, 4.0, 1.0, 2.0], "the top row comes first");
+        assert!(read_fits(b"not a fits file").is_err());
+    }
+
+    #[test]
+    fn the_eyepiece_that_frames_the_object_is_picked() {
+        let f = |deg: f64| Field { label: String::new(), rgb: (0, 0, 0), radius_deg: deg / 2.0, aperture: 150.0, power: 50.0 };
+        let set = [f(2.0), f(0.5), f(1.0)];
+        // M57 is about 1.4 arcminutes: the narrowest field frames it.
+        assert_eq!(best_field(&set, dso("M57")), 1);
+        // M31 is three degrees: none holds it, so the widest.
+        assert_eq!(best_field(&set, dso("M31")), 0);
     }
 
     #[test]

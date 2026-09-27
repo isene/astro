@@ -249,9 +249,10 @@ The Sun, the Moon and the planets move across the survey's plates, so they get t
 
 - Each is at its true size in the field, from its distance tonight. At 50× Jupiter is a small disk and Uranus a dot; at 200× the Moon overflows the field.
 - It is lit from the side the Sun is on: Venus near the Sun is a thin crescent, Mars a little gibbous.
+- Jupiter's four moons stand where they are tonight (Meeus, *Astronomical Algorithms*, chapter 44). A moon behind the planet is hidden.
+- Saturn is drawn, not photographed: its rings tilt as they do tonight, from where its pole points. In 2026 they are nearly edge-on.
 - The air, or the telescope's own limit, softens it, whichever is coarser.
 - The Sun is today's white-light picture from NASA's SDO satellite, orange as a glass solar filter shows it, spots and all. Look at the Sun only through a proper solar filter over the front of the telescope.
-- The pictures come from Wikipedia, so Saturn's rings are as open as in its photo. In 2026 they are nearly edge-on.
 
 ## Gear-mode keys
 

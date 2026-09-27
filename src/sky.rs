@@ -240,7 +240,85 @@ fn stance(name: &str, ra: f64, dec: f64, bodies: &[Body], at: Moment, lat: f64, 
     let da = (sra - ra).to_radians();
     let (d1, d2) = (dec.to_radians(), sdec.to_radians());
     let sun_pa_deg = (da.sin() * d2.cos()).atan2(d1.cos() * d2.sin() - d1.sin() * d2.cos() * da.cos()).to_degrees();
-    crate::photo::Stance { size_deg, phase_deg, sun_pa_deg }
+    let mut st = crate::photo::Stance { size_deg, phase_deg, sun_pa_deg, ..Default::default() };
+    let ut = at.hour as f64 - tz;
+    if name == "jupiter" {
+        st.moons = jupiter_moons(days_since_j2000(at.year, at.month, at.day, ut));
+    }
+    if name == "saturn" {
+        // Saturn's north pole points to RA 40.589°, Dec 83.537° (IAU).
+        let (ap, dp) = (40.589f64.to_radians(), 83.537f64.to_radians());
+        let (a, d) = (ra.to_radians(), dec.to_radians());
+        let tilt = -(dp.sin() * d.sin() + dp.cos() * d.cos() * (ap - a).cos());
+        st.ring_tilt_deg = tilt.clamp(-1.0, 1.0).asin().to_degrees();
+        st.pole_pa_deg = (dp.cos() * (ap - a).sin())
+            .atan2(dp.sin() * d.cos() - dp.cos() * d.sin() * (ap - a).cos())
+            .to_degrees();
+    }
+    st
+}
+
+/// Days from noon, 1 January 2000 (UT), the epoch the moons count from.
+fn days_since_j2000(year: i32, month: u32, day: u32, ut_hours: f64) -> f64 {
+    let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * m as i32 + 2) / 5 + day as i32 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let since_1970 = era as i64 * 146_097 + doe as i64 - 719_468;
+    since_1970 as f64 - 10_957.5 + ut_hours / 24.0
+}
+
+/// Where Jupiter's four moons are, `d` days from J2000: west and north
+/// of its centre in its equatorial radii, and whether the planet hides
+/// each one. Meeus, Astronomical Algorithms, chapter 44, the method good
+/// to a few hundredths of a radius.
+fn jupiter_moons(d: f64) -> [(f64, f64, bool); 4] {
+    let sin = |x: f64| x.to_radians().sin();
+    let cos = |x: f64| x.to_radians().cos();
+    let v = 172.74 + 0.00111588 * d;
+    let m = 357.529 + 0.9856003 * d;
+    let n = 20.020 + 0.0830853 * d + 0.329 * sin(v);
+    let j = 66.115 + 0.9025179 * d - 0.329 * sin(v);
+    let a = 1.915 * sin(m) + 0.020 * sin(2.0 * m);
+    let b = 5.555 * sin(n) + 0.168 * sin(2.0 * n);
+    let k = j + a - b;
+    let big_r = 1.00014 - 0.01671 * cos(m) - 0.00014 * cos(2.0 * m);
+    let r = 5.20872 - 0.25208 * cos(n) - 0.00611 * cos(2.0 * n);
+    let delta = (r * r + big_r * big_r - 2.0 * r * big_r * cos(k)).sqrt();
+    let psi = (big_r / delta * sin(k)).asin().to_degrees();
+    let t = d - delta / 173.0;
+    let mut u = [
+        163.8069 + 203.4058646 * t + psi - b,
+        358.4140 + 101.2916335 * t + psi - b,
+        5.7176 + 50.2345180 * t + psi - b,
+        224.8092 + 21.4879800 * t + psi - b,
+    ];
+    let g = 331.18 + 50.310482 * t;
+    let h = 87.45 + 21.569231 * t;
+    let (u1, u2, u3) = (u[0], u[1], u[2]);
+    u[0] += 0.473 * sin(2.0 * (u1 - u2));
+    u[1] += 1.065 * sin(2.0 * (u2 - u3));
+    u[2] += 0.165 * sin(g);
+    u[3] += 0.843 * sin(h);
+    let rr = [
+        5.9057 - 0.0244 * cos(2.0 * (u1 - u2)),
+        9.3966 - 0.0882 * cos(2.0 * (u2 - u3)),
+        14.9883 - 0.0216 * cos(g),
+        26.3627 - 0.1939 * cos(h),
+    ];
+    let lambda = 34.35 + 0.083091 * d + 0.329 * sin(v) + b;
+    let ds = 3.12 * sin(lambda + 42.8);
+    let de = ds - 2.22 * sin(psi) * cos(lambda + 22.0) - 1.30 * (r - delta) / delta * sin(lambda - 100.5);
+    let mut out = [(0.0, 0.0, false); 4];
+    for i in 0..4 {
+        let (x, y) = (rr[i] * sin(u[i]), -rr[i] * cos(u[i]) * sin(de));
+        // At u near 0 the moon is beyond the planet; inside the disk
+        // it is hidden then.
+        let behind = cos(u[i]) > 0.0 && x * x + (y / 0.935).powi(2) < 1.0;
+        out[i] = (x, y, behind);
+    }
+    out
 }
 
 fn describe_target(t: &Target, at: Moment) -> String {
@@ -655,6 +733,29 @@ mod tests {
                 v.save(format!("{dir}/{}-{power:.0}.png", b.name)).unwrap();
             }
         }
+    }
+
+    /// Meeus's example 44.a, 1992 December 16 at 0h UT: Io 3.44 radii
+    /// east, Europa 7.44 west, Ganymede 1.24 west, Callisto 7.08 west.
+    #[test]
+    fn jupiters_moons_stand_where_meeus_has_them() {
+        let moons = jupiter_moons(days_since_j2000(1992, 12, 16, 0.0));
+        let xs: Vec<f64> = moons.iter().map(|m| m.0).collect();
+        for (got, want) in xs.iter().zip([-3.44, 7.44, 1.24, 7.08]) {
+            assert!((got - want).abs() < 0.1, "moon at {got:.2}, Meeus {want}");
+        }
+        assert_eq!(days_since_j2000(2000, 1, 1, 12.0), 0.0);
+    }
+
+    /// Saturn in late 2026: the rings a few degrees open, the south face
+    /// toward us since they passed edge-on in 2025.
+    #[test]
+    fn saturns_rings_are_nearly_shut_in_2026() {
+        let at = Moment { year: 2026, month: 9, day: 27, hour: 20 };
+        let (_, bodies) = sky_at(at, 59.9, 10.7, 2.0);
+        let s = bodies.iter().find(|b| b.name == "saturn").unwrap();
+        let st = stance("saturn", s.ra, s.dec, &bodies, at, 59.9, 10.7, 2.0);
+        assert!((-12.0..0.0).contains(&st.ring_tilt_deg), "tilt {}", st.ring_tilt_deg);
     }
 
     #[test]

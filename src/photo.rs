@@ -69,7 +69,7 @@ pub enum Subject<'a> {
 }
 
 /// Where the sun, the moon or a planet stands, for its eyepiece view.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stance {
     /// How big it looks, in degrees across; Saturn across its rings.
     pub size_deg: f64,
@@ -77,6 +77,14 @@ pub struct Stance {
     pub phase_deg: f64,
     /// Which way the sun lies from it on the sky, from north through east.
     pub sun_pa_deg: f64,
+    /// Jupiter's four moons, Io to Callisto: west and north of its
+    /// centre in its equatorial radii, and whether it hides the moon.
+    pub moons: [(f64, f64, bool); 4],
+    /// Saturn: how far its rings tilt toward us (plus shows the north
+    /// face), and which way its pole points on the sky, from north
+    /// through east.
+    pub ring_tilt_deg: f64,
+    pub pole_pa_deg: f64,
 }
 
 impl Subject<'_> {
@@ -359,7 +367,7 @@ pub fn eyepiece_view(plate: &Plate, aperture: f64, bortle: f64) -> DynamicImage 
 /// sees it: the view through a solar filter, spots and all. Kept for
 /// twelve hours, since the spots move and change from day to day.
 fn sun_today() -> Result<Vec<u8>, String> {
-    let path = cache_path(&Subject::Body("sun", Stance { size_deg: 0.0, phase_deg: 0.0, sun_pa_deg: 0.0 }))
+    let path = cache_path(&Subject::Body("sun", Stance::default()))
         .with_file_name("sun-hmi.jpg");
     let fresh = std::fs::metadata(&path).and_then(|m| m.modified()).ok()
         .and_then(|t| t.elapsed().ok())
@@ -436,7 +444,12 @@ pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, 
     let sky = if sun { 0 } else { (4.0 + 2.0 * bortle.clamp(1.0, 9.0)) as u8 };
     let mut out = RgbImage::from_pixel(N, N, Rgb([sky, sky, sky]));
     let rgb = picture.to_rgb8();
-    if let Some((left, top, bw, bh)) = find_disk(&rgb) {
+    let across_px = st.size_deg / fov * N as f64;
+    if name == "saturn" {
+        // Drawn, not taken from the photo: its rings tilt a little more
+        // or less every year, and no photo shows tonight's tilt.
+        draw_saturn(&mut out, N as f64 / 2.0, N as f64 / 2.0, across_px / 2.0 / 2.27, st);
+    } else if let Some((left, top, bw, bh)) = find_disk(&rgb) {
         // Across the body on the plate, in pixels; the height keeps the
         // picture's own shape (Saturn is wider than tall).
         let across = st.size_deg / fov * N as f64;
@@ -478,6 +491,25 @@ pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, 
             }
         }
     }
+    if name == "jupiter" {
+        // The four moons as points of light, Callisto up to 26 radii out.
+        let r = across_px / 2.0;
+        for &(x, y, hidden) in &st.moons {
+            if hidden {
+                continue;
+            }
+            let (px, py) = (N as f64 / 2.0 + x * r, N as f64 / 2.0 - y * r);
+            for (dx, dy, v) in [(0, 0, 235u8), (1, 0, 95), (-1, 0, 95), (0, 1, 95), (0, -1, 95), (1, 1, 40), (-1, 1, 40), (1, -1, 40), (-1, -1, 40)] {
+                let (qx, qy) = (px.round() as i64 + dx, py.round() as i64 + dy);
+                if (0..N as i64).contains(&qx) && (0..N as i64).contains(&qy) {
+                    let o = out.get_pixel_mut(qx as u32, qy as u32);
+                    for c in 0..3 {
+                        o[c] = o[c].max(v);
+                    }
+                }
+            }
+        }
+    }
     // The air, or the telescope's own limit, whichever is coarser: two
     // arcseconds of seeing, or 116 / aperture (Dawes).
     let sharp = 2.0f64.max(116.0 / field.aperture.max(20.0));
@@ -492,6 +524,68 @@ pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, 
         }
     }
     DynamicImage::ImageRgb8(out)
+}
+
+/// Saturn at the centre (cx, cy), its globe `re` pixels to the equator:
+/// the globe flattened by a tenth and banded, the rings C, B and A with
+/// the Cassini division between the last two, tilted by the stance. The
+/// near half of the rings crosses in front of the globe, the far half
+/// goes behind it. Each pixel is the mean of nine points inside it, so
+/// the rings thin out as they close and all but vanish edge-on.
+fn draw_saturn(out: &mut RgbImage, cx: f64, cy: f64, re: f64, st: Stance) {
+    let (b, p) = (st.ring_tilt_deg.to_radians(), st.pole_pa_deg.to_radians());
+    // On the image, x west (right) and y north (up): the pole's way and
+    // the equator's, across it.
+    let (nx, ny) = (-p.sin(), p.cos());
+    let (ex, ey) = (ny, -nx);
+    let polar = re * ((0.902 * b.cos()).powi(2) + b.sin().powi(2)).sqrt();
+    let sinb = b.sin().abs().max(1e-4);
+    let near_is_south = b > 0.0;
+    let reach = (re * 2.3).ceil() as i64 + 1;
+    let (w, h) = out.dimensions();
+    for py in (cy as i64 - reach).max(0)..(cy as i64 + reach).min(h as i64) {
+        for px in (cx as i64 - reach).max(0)..(cx as i64 + reach).min(w as i64) {
+            let mut sum = [0.0f64; 3];
+            for sy in 0..3 {
+                for sx in 0..3 {
+                    let dx = px as f64 + (sx as f64 + 0.5) / 3.0 - cx;
+                    let dy = cy - (py as f64 + (sy as f64 + 0.5) / 3.0);
+                    let (u, v) = (dx * ex + dy * ey, dx * nx + dy * ny);
+                    let ring = {
+                        let rho = (u * u + (v / sinb).powi(2)).sqrt() / re;
+                        match rho {
+                            r if (1.24..1.53).contains(&r) => Some([110.0, 100.0, 85.0]),
+                            r if (1.53..1.95).contains(&r) => Some([232.0, 216.0, 176.0]),
+                            r if (2.03..2.27).contains(&r) => Some([196.0, 180.0, 146.0]),
+                            _ => None,
+                        }
+                    };
+                    let g = (u / re).powi(2) + (v / polar).powi(2);
+                    let globe = (g <= 1.0).then(|| {
+                        let mu = (1.0 - g).sqrt();
+                        let lat = (v / polar).clamp(-1.0, 1.0).asin();
+                        let band = 1.0 - 0.07 * (lat * 9.0).cos().max(0.0);
+                        let k = (0.5 + 0.5 * mu) * band;
+                        [228.0 * k, 205.0 * k, 150.0 * k]
+                    });
+                    let near = if near_is_south { v < 0.0 } else { v > 0.0 };
+                    let c = match (ring, globe) {
+                        (Some(r), Some(_)) if near => r,
+                        (_, Some(gl)) => gl,
+                        (Some(r), None) => r,
+                        (None, None) => [0.0; 3],
+                    };
+                    for i in 0..3 {
+                        sum[i] += c[i] / 9.0;
+                    }
+                }
+            }
+            let o = out.get_pixel_mut(px as u32, py as u32);
+            for i in 0..3 {
+                o[i] = o[i].max(sum[i].round().min(255.0) as u8);
+            }
+        }
+    }
 }
 
 /// The picture turned by `flip` and fitted, whole, into a canvas of
@@ -622,7 +716,7 @@ mod tests {
     #[test]
     fn a_body_has_its_own_article_and_its_own_shelf() {
         assert_eq!(body_name("jupiter"), "Jupiter");
-        let st = Stance { size_deg: 0.01, phase_deg: 0.0, sun_pa_deg: 0.0 };
+        let st = Stance { size_deg: 0.01, ..Stance::default() };
         assert_eq!(Subject::Body("mercury", st).titles(), ["Mercury (planet)"]);
         assert_eq!(Subject::Body("moon", st).titles(), ["Moon"]);
         assert!(cache_path(&Subject::Body("sun", st)).ends_with(".astro/images/body/sun.img"));
@@ -705,7 +799,7 @@ mod tests {
         }));
         let field = Field { label: String::new(), rgb: (0, 0, 0), radius_deg: 0.5, aperture: 150.0, power: 100.0 };
         // Half lit, the sun to the east: the left half of the disk.
-        let st = Stance { size_deg: 0.5, phase_deg: 90.0, sun_pa_deg: 90.0 };
+        let st = Stance { size_deg: 0.5, phase_deg: 90.0, sun_pa_deg: 90.0, ..Stance::default() };
         let v = body_view(&ball, "moon", st, &field, 4.0).to_rgb8();
         let at = |x: u32, y: u32| v.get_pixel(x, y)[0];
         assert!(at(300, 400) > 150, "the east (left) half is lit");
@@ -714,6 +808,26 @@ mod tests {
         assert_eq!(at(0, 0), 0, "outside the field stop");
         let (l, _, w, _) = find_disk(&ball.to_rgb8()).unwrap();
         assert!((18..=22).contains(&l) && (155..=162).contains(&w), "the disk found at {l}, {w} wide");
+    }
+
+    /// Saturn wide open shows its rings well clear of the globe; edge-on
+    /// they all but vanish beside it.
+    #[test]
+    fn saturns_rings_tilt_with_the_stance() {
+        let paint = |tilt: f64| {
+            let mut img = RgbImage::new(200, 200);
+            draw_saturn(&mut img, 100.0, 100.0, 30.0, Stance { ring_tilt_deg: tilt, ..Stance::default() });
+            img
+        };
+        let open = paint(25.0);
+        let shut = paint(0.5);
+        // Beside the globe, 1.8 radii out along the equator: the B ring.
+        assert!(open.get_pixel(154, 100)[0] > 150, "the open ring beside the globe");
+        assert!(shut.get_pixel(154, 100)[0] < 80, "edge-on, a thread at most");
+        // Across the globe's south edge, 27.5 pixels down: the open rings'
+        // near side in front of it; shut, only the dark past the globe.
+        assert!(open.get_pixel(100, 127)[0] > 100, "the near rings cross the globe");
+        assert_eq!(shut.get_pixel(100, 127)[0], 0);
     }
 
     #[test]

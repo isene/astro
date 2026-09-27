@@ -437,9 +437,12 @@ fn find_disk(img: &RgbImage) -> Option<(u32, u32, u32, u32)> {
 /// Mars), softened by the air or the telescope's own limit, whichever
 /// is coarser, on the night sky in the round field stop. The sun shows
 /// orange, as a glass solar filter shows it, on black.
-pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, bortle: f64) -> DynamicImage {
+///
+/// `zoom` leans in: the middle of the field, that many times larger,
+/// drawn afresh so the body stays sharp.
+pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, bortle: f64, zoom: f64) -> DynamicImage {
     const N: u32 = 800;
-    let fov = field.radius_deg * 2.0;
+    let fov = field.radius_deg * 2.0 / zoom.max(1.0);
     let sun = name == "sun";
     let sky = if sun { 0 } else { (4.0 + 2.0 * bortle.clamp(1.0, 9.0)) as u8 };
     let mut out = RgbImage::from_pixel(N, N, Rgb([sky, sky, sky]));
@@ -517,13 +520,26 @@ pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, 
     if sigma > 0.3 {
         out = image::imageops::blur(&out, sigma as f32);
     }
-    let (c, r) = (N as f64 / 2.0, N as f64 / 2.0);
+    let (c, stop) = (N as f64 / 2.0, N as f64 / 2.0 * zoom.max(1.0));
     for (x, y, p) in out.enumerate_pixels_mut() {
-        if (x as f64 + 0.5 - c).hypot(y as f64 + 0.5 - r) > r {
+        if (x as f64 + 0.5 - c).hypot(y as f64 + 0.5 - c) > stop {
             *p = Rgb([0, 0, 0]);
         }
     }
     DynamicImage::ImageRgb8(out)
+}
+
+/// How far `+` leans into the eyepiece view, step by step.
+const ZOOMS: [f64; 7] = [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0];
+
+/// The middle of `img`, `zoom` times larger once fitted.
+fn zoomed(img: &DynamicImage, zoom: f64) -> DynamicImage {
+    if zoom <= 1.0 {
+        return img.clone();
+    }
+    let (w, h) = (img.width(), img.height());
+    let (cw, ch) = (((w as f64 / zoom).round() as u32).max(1), ((h as f64 / zoom).round() as u32).max(1));
+    img.crop_imm((w - cw) / 2, (h - ch) / 2, cw, ch)
 }
 
 /// Saturn at the centre (cx, cy), its globe `re` pixels to the equator:
@@ -639,31 +655,43 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
     let mut pick = best_field(&fields, s.size_deg());
     let mut photo: Option<Result<DynamicImage, String>> = None;
     let mut plates: Vec<Option<Result<DynamicImage, String>>> = (0..fields.len()).map(|_| None).collect();
+    // A body's own picture, drawn afresh for each eyepiece and zoom.
+    let mut source: Option<Result<DynamicImage, String>> = None;
+    let mut zoom = 0usize;
     let (x, y) = (popup.pane.x, popup.pane.y + 1);
     loop {
         let eyepiece = real;
-        let loaded = if eyepiece {
+        let z = ZOOMS[zoom];
+        let loaded: Result<DynamicImage, String> = if eyepiece {
             let f = &fields[pick];
-            plates[pick].get_or_insert_with(|| match s {
-                Subject::Dso(d) => {
-                    popup.show(&text(" fetching the sky survey plate …"));
-                    survey(d, f.radius_deg * 2.0)
-                        .and_then(|b| read_fits(&b))
-                        .map(|plate| eyepiece_view(&plate, f.aperture, bortle))
-                }
-                Subject::Body(name, st) => {
-                    popup.show(&text(" fetching the picture …"));
-                    let bytes = if name == "sun" { sun_today() } else { picture(&s) };
-                    bytes
-                        .and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
-                        .map(|img| body_view(&img, name, st, f, bortle))
-                }
-            })
+            match s {
+                Subject::Dso(d) => plates[pick]
+                    .get_or_insert_with(|| {
+                        popup.show(&text(" fetching the sky survey plate …"));
+                        survey(d, f.radius_deg * 2.0)
+                            .and_then(|b| read_fits(&b))
+                            .map(|plate| eyepiece_view(&plate, f.aperture, bortle))
+                    })
+                    .as_ref()
+                    .map(|img| zoomed(img, z))
+                    .map_err(|e| e.clone()),
+                Subject::Body(name, st) => source
+                    .get_or_insert_with(|| {
+                        popup.show(&text(" fetching the picture …"));
+                        let bytes = if name == "sun" { sun_today() } else { picture(&s) };
+                        bytes.and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
+                    })
+                    .as_ref()
+                    .map(|img| body_view(img, name, st, f, bortle, z))
+                    .map_err(|e| e.clone()),
+            }
         } else {
-            photo.get_or_insert_with(|| {
-                popup.show(&text(" fetching the picture from Wikipedia …"));
-                picture(&s).and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
-            })
+            photo
+                .get_or_insert_with(|| {
+                    popup.show(&text(" fetching the picture from Wikipedia …"));
+                    picture(&s).and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
+                })
+                .clone()
         };
         let credit = match s {
             Subject::Body("sun", _) => "only through a solar filter    SDO",
@@ -673,13 +701,15 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
         let foot = match (&loaded, eyepiece) {
             (Err(e), _) => format!(" {e}    r  {}    q  close", if real { "photo" } else { "eyepiece view" }),
             (Ok(_), true) => format!(
-                " f  {}    r  photo    e  next eyepiece    q  close    {}    {credit}",
-                flip.label(), field_note(&fields[pick])
+                " f  {}    + -  zoom{}    r  photo    e  next eyepiece    q  close    {}    {credit}",
+                flip.label(),
+                if z > 1.0 { format!(" {z}×") } else { String::new() },
+                field_note(&fields[pick])
             ),
             (Ok(_), false) => format!(" f  {}    r  eyepiece view    q  close    picture: Wikipedia", flip.label()),
         };
         popup.show(&text(&foot));
-        match loaded {
+        match &loaded {
             Ok(img) => { display.swap_canvas(&fit(img, flip, w, h.saturating_sub(2), None), x, y); }
             Err(_) => display.clear(x, y, w, h.saturating_sub(2), cols, rows),
         }
@@ -687,6 +717,8 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
             Some("f") => flip = flip.next(),
             Some("r") => real = !real,
             Some("e") if eyepiece => pick = (pick + 1) % fields.len(),
+            Some("+") | Some("=") if eyepiece => zoom = (zoom + 1).min(ZOOMS.len() - 1),
+            Some("-") if eyepiece => zoom = zoom.saturating_sub(1),
             Some("q") | Some("ESC") | Some("ENTER") | None => break,
             _ => {}
         }
@@ -702,7 +734,7 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
 pub fn body_view_for_test(name: &str, st: Stance, field: &Field) -> DynamicImage {
     let s = Subject::Body(name, st);
     let bytes = if name == "sun" { sun_today() } else { picture(&s) }.expect("fetched");
-    body_view(&image::load_from_memory(&bytes).expect("decodes"), name, st, field, 4.0)
+    body_view(&image::load_from_memory(&bytes).expect("decodes"), name, st, field, 4.0, 1.0)
 }
 
 #[cfg(test)]
@@ -800,12 +832,16 @@ mod tests {
         let field = Field { label: String::new(), rgb: (0, 0, 0), radius_deg: 0.5, aperture: 150.0, power: 100.0 };
         // Half lit, the sun to the east: the left half of the disk.
         let st = Stance { size_deg: 0.5, phase_deg: 90.0, sun_pa_deg: 90.0, ..Stance::default() };
-        let v = body_view(&ball, "moon", st, &field, 4.0).to_rgb8();
+        let v = body_view(&ball, "moon", st, &field, 4.0, 1.0).to_rgb8();
         let at = |x: u32, y: u32| v.get_pixel(x, y)[0];
         assert!(at(300, 400) > 150, "the east (left) half is lit");
         assert!(at(500, 400) < 40, "the west half is dark");
         assert!(at(300, 150) < 30 && at(300, 250) > 100, "half the field wide: 400 across of 800");
         assert_eq!(at(0, 0), 0, "outside the field stop");
+        // Leaning in twice as far: twice as big, the field stop past the corners.
+        let z = body_view(&ball, "moon", Stance { phase_deg: 0.0, ..st }, &field, 4.0, 2.0).to_rgb8();
+        assert!(z.get_pixel(400, 20)[0] > 150, "800 across now: lit 20 pixels from the top");
+        assert!(z.get_pixel(0, 0)[0] > 0, "no black corners: the field stop is outside the view");
         let (l, _, w, _) = find_disk(&ball.to_rgb8()).unwrap();
         assert!((18..=22).contains(&l) && (155..=162).contains(&w), "the disk found at {l}, {w} wide");
     }

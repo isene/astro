@@ -220,10 +220,10 @@ The merge unlocks features neither standalone app could:
 | `j` / `k` | A day on / back |
 | arrows | Move the crosshair over the sky; the view follows it through the hours |
 | `+` / `-` | Zoom in / out |
-| `/` | Go to an object: `M31`, `C14`, `NGC 7000` or part of a name |
-| `ENTER` | What is under the crosshair: kind, magnitude, size, constellation |
-| `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/dso/` |
-| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object |
+| `/` | Go to an object: `M31`, `C14`, `NGC 7000`, part of a name, or the Sun, the Moon or a planet by name |
+| `ENTER` | What is under the crosshair: kind, magnitude, size, constellation; for the Sun, the Moon or a planet, where it is (and how much of the Moon is lit) |
+| `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/` |
+| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object. Deep-sky objects only: the Sun, the Moon and the planets move across the survey's plates |
 | `e` in the eyepiece view | The next combination of your eyepiece set |
 | `v` | The eyepiece set's circles round the crosshair, with a legend |
 | `a` | Add the object under the crosshair to the night's plan |

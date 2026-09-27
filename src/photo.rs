@@ -1,5 +1,6 @@
-//! A deep-sky object's picture, the lead image of its Wikipedia article,
-//! in a box in the middle of the screen. `f` turns it the way the naked
+//! A deep-sky object's picture, or the sun's, the moon's or a planet's:
+//! the lead image of its Wikipedia article, in a box in the middle of
+//! the screen. `f` turns it the way the naked
 //! eye, a telescope (south up) or a star diagonal (mirrored) shows the
 //! object, as in the moon app.
 //!
@@ -56,9 +57,48 @@ impl Flip {
 /// Wikimedia asks every program to say who it is.
 const AGENT: &str = "astro (https://github.com/isene/astro)";
 
-fn cache_path(d: &Dso) -> PathBuf {
+/// What the picture box shows: a deep-sky object, or the sun, the moon
+/// or a planet by its lower-case name ("jupiter").
+#[derive(Clone, Copy)]
+pub enum Subject<'a> {
+    Dso(&'a Dso),
+    Body(&'a str),
+}
+
+impl Subject<'_> {
+    fn label(&self) -> String {
+        match self {
+            Subject::Dso(d) => d.id.to_string(),
+            Subject::Body(n) => body_name(n),
+        }
+    }
+
+    fn titles(&self) -> Vec<String> {
+        match self {
+            Subject::Dso(d) => titles(d),
+            Subject::Body(n) => vec![body_article(n)],
+        }
+    }
+}
+
+/// The name a body goes by: "jupiter" is Jupiter.
+pub fn body_name(n: &str) -> String {
+    let mut c = n.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// A body's Wikipedia article. Mercury the planet shares its name.
+fn body_article(n: &str) -> String {
+    if n == "mercury" { "Mercury (planet)".into() } else { body_name(n) }
+}
+
+fn cache_path(s: &Subject) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(".astro/images/dso").join(format!("{}.img", d.id))
+    let (dir, key) = match s {
+        Subject::Dso(d) => ("dso", d.id.to_string()),
+        Subject::Body(n) => ("body", n.to_string()),
+    };
+    PathBuf::from(home).join(".astro/images").join(dir).join(format!("{key}.img"))
 }
 
 /// Article titles to try, best first. Wikipedia keeps "Messier 31" and
@@ -102,20 +142,21 @@ fn image_url(title: &str) -> Option<String> {
 }
 
 /// The picture's bytes: kept ones, else fetched from Wikipedia and kept.
-fn picture(d: &Dso) -> Result<Vec<u8>, String> {
-    let path = cache_path(d);
+fn picture(s: &Subject) -> Result<Vec<u8>, String> {
+    let path = cache_path(s);
+    let id = s.label();
     if let Ok(b) = std::fs::read(&path) {
         if !b.is_empty() {
             return Ok(b);
         }
     }
-    let url = titles(d).iter().find_map(|t| image_url(t))
-        .ok_or_else(|| format!("Wikipedia has no picture of {} (or could not be reached)", d.id))?;
+    let url = s.titles().iter().find_map(|t| image_url(t))
+        .ok_or_else(|| format!("Wikipedia has no picture of {id} (or could not be reached)"))?;
     let mut bytes = Vec::new();
     ureq::get(&url).set("User-Agent", AGENT).timeout(Duration::from_secs(30)).call()
-        .map_err(|e| format!("the picture of {} would not download: {e}", d.id))?
+        .map_err(|e| format!("the picture of {id} would not download: {e}"))?
         .into_reader().take(20 << 20).read_to_end(&mut bytes)
-        .map_err(|e| format!("the picture of {} broke off: {e}", d.id))?;
+        .map_err(|e| format!("the picture of {id} broke off: {e}"))?;
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -130,7 +171,7 @@ fn picture(d: &Dso) -> Result<Vec<u8>, String> {
 const SURVEY_PX: u32 = 800;
 
 fn survey_path(d: &Dso, fov: f64) -> PathBuf {
-    cache_path(d).with_file_name(format!("{}-dss-{:.0}.fits", d.id, fov * 60.0))
+    cache_path(&Subject::Dso(d)).with_file_name(format!("{}-dss-{:.0}.fits", d.id, fov * 60.0))
 }
 
 /// A survey plate: one value per pixel, the top row first.
@@ -305,11 +346,13 @@ fn fit(img: &DynamicImage, flip: Flip, cols: u16, rows: u16, cell: Option<(u16, 
     canvas
 }
 
-/// Show `d` in a box in the middle of the screen until q, Esc or Enter:
-/// its photo, or with `real` the eyepiece view. `f` turns it, `r` swaps
-/// the two, `e` steps through the eyepiece set. Gives back the turn and
-/// the choice, so the next object keeps them.
-pub fn show(d: &Dso, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Flip, bool), String> {
+/// Show `s` in a box in the middle of the screen until q, Esc or Enter:
+/// its photo, or for a deep-sky object with `real` the eyepiece view.
+/// `f` turns it, `r` swaps the two, `e` steps through the eyepiece set.
+/// Gives back the turn and the choice, so the next object keeps them.
+/// A survey plate cannot show the sun, the moon or a planet, which move
+/// across it, so they have the photo alone.
+pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Flip, bool), String> {
     let mut display = glow::Display::new();
     if !display.supported() {
         return Err("this terminal shows no pictures".into());
@@ -319,7 +362,14 @@ pub fn show(d: &Dso, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Fli
     let h = (rows * 3 / 4).clamp(10, rows.saturating_sub(4).max(10));
     let mut popup = Popup::centered(w, h, 252, 234);
     popup.pane.wrap = false;
-    let title = if d.name.is_empty() { format!(" {}", d.id) } else { format!(" {} {}", d.id, d.name) };
+    let dso = match s {
+        Subject::Dso(d) => Some(d),
+        Subject::Body(_) => None,
+    };
+    let title = match dso {
+        Some(d) if !d.name.is_empty() => format!(" {} {}", d.id, d.name),
+        _ => format!(" {}", s.label()),
+    };
     let text = |foot: &str| {
         let mut lines = vec![title.clone()];
         lines.extend(std::iter::repeat_n(String::new(), h.saturating_sub(2) as usize));
@@ -327,16 +377,17 @@ pub fn show(d: &Dso, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Fli
         lines.join("\n")
     };
 
-    let mut fields = crate::sky::fields();
-    if fields.is_empty() {
+    let mut fields = if dso.is_some() { crate::sky::fields() } else { Vec::new() };
+    if let (true, Some(d)) = (fields.is_empty(), dso) {
         fields.push(stand_in(d));
     }
-    let mut pick = best_field(&fields, d);
+    let mut pick = dso.map(|d| best_field(&fields, d)).unwrap_or(0);
     let mut photo: Option<Result<DynamicImage, String>> = None;
     let mut plates: Vec<Option<Result<DynamicImage, String>>> = (0..fields.len()).map(|_| None).collect();
     let (x, y) = (popup.pane.x, popup.pane.y + 1);
     loop {
-        let loaded = if real {
+        let eyepiece = real && dso.is_some();
+        let loaded = if let (true, Some(d)) = (eyepiece, dso) {
             let f = &fields[pick];
             plates[pick].get_or_insert_with(|| {
                 popup.show(&text(" fetching the sky survey plate …"));
@@ -347,11 +398,13 @@ pub fn show(d: &Dso, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Fli
         } else {
             photo.get_or_insert_with(|| {
                 popup.show(&text(" fetching the picture from Wikipedia …"));
-                picture(d).and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", d.id)))
+                picture(&s).and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
             })
         };
-        let foot = match (&loaded, real) {
+        let foot = match (&loaded, eyepiece) {
+            (Err(e), _) if dso.is_none() => format!(" {e}    q  close"),
             (Err(e), _) => format!(" {e}    r  {}    q  close", if real { "photo" } else { "eyepiece view" }),
+            (Ok(_), false) if dso.is_none() => format!(" f  {}    q  close    picture: Wikipedia", flip.label()),
             (Ok(_), true) => format!(
                 " f  {}    r  photo    e  next eyepiece    q  close    {}    sky: DSS2 via CDS",
                 flip.label(), field_note(&fields[pick])
@@ -365,8 +418,8 @@ pub fn show(d: &Dso, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Fli
         }
         match Input::getchr(None).as_deref() {
             Some("f") => flip = flip.next(),
-            Some("r") => real = !real,
-            Some("e") if real => pick = (pick + 1) % fields.len(),
+            Some("r") if dso.is_some() => real = !real,
+            Some("e") if eyepiece => pick = (pick + 1) % fields.len(),
             Some("q") | Some("ESC") | Some("ENTER") | None => break,
             _ => {}
         }
@@ -382,6 +435,14 @@ mod tests {
 
     fn dso(id: &'static str) -> &'static Dso {
         starmap::dsos().iter().find(|d| d.id == id).unwrap()
+    }
+
+    #[test]
+    fn a_body_has_its_own_article_and_its_own_shelf() {
+        assert_eq!(body_name("jupiter"), "Jupiter");
+        assert_eq!(Subject::Body("mercury").titles(), ["Mercury (planet)"]);
+        assert_eq!(Subject::Body("moon").titles(), ["Moon"]);
+        assert!(cache_path(&Subject::Body("sun")).ends_with(".astro/images/body/sun.img"));
     }
 
     #[test]
@@ -412,13 +473,13 @@ mod tests {
     #[ignore]
     fn fetch_and_turn_a_real_picture() {
         let Ok(dir) = std::env::var("ASTRO_PHOTO_DUMP") else { return };
-        let bytes = picture(dso("M31")).expect("fetched");
+        let bytes = picture(&Subject::Dso(dso("M31"))).expect("fetched");
         let img = image::load_from_memory(&bytes).expect("decodes");
         for (name, f) in [("eye", Flip::Eye), ("telescope", Flip::Telescope), ("diagonal", Flip::Diagonal)] {
             let c = fit(&img, f, 60, 20, Some((11, 21)));
             std::fs::write(format!("{dir}/m31-{name}.png"), c.png()).unwrap();
         }
-        assert!(cache_path(dso("M31")).exists(), "kept for next time");
+        assert!(cache_path(&Subject::Dso(dso("M31"))).exists(), "kept for next time");
     }
 
     /// Fetches from CDS: `ASTRO_PHOTO_DUMP=dir cargo test -- --ignored eyepiece`

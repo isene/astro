@@ -152,6 +152,62 @@ pub fn under_crosshair(view: &View, zoom: f64) -> Option<&'static starmap::Dso> 
         .map(|(_, d)| d)
 }
 
+/// What Enter described last; Enter again shows its picture.
+#[derive(Clone)]
+enum Target {
+    Dso(&'static starmap::Dso),
+    /// The sun, the moon or a planet: its name and where it is.
+    Body(String, f64, f64),
+}
+
+fn body_target(b: &Body) -> Target {
+    Target::Body(b.name.clone(), b.ra, b.dec)
+}
+
+/// The deep-sky object, the sun, the moon or the planet nearest the
+/// crosshair, if one is within reach.
+fn target_under_crosshair(view: &View, zoom: f64, bodies: &[Body]) -> Option<Target> {
+    let (ra, dec) = view.centre();
+    let reach = (12.0 / zoom).max(0.5);
+    let body = bodies
+        .iter()
+        .map(|b| (sep_deg(ra, dec, b.ra, b.dec), b))
+        .filter(|(s, _)| *s <= reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    let dso = under_crosshair(view, zoom).map(|d| (sep_deg(ra, dec, d.ra, d.dec), d));
+    match (body, dso) {
+        (Some((sb, b)), Some((sd, _))) if sb <= sd => Some(body_target(b)),
+        (_, Some((_, d))) => Some(Target::Dso(d)),
+        (Some((_, b)), None) => Some(body_target(b)),
+        (None, None) => None,
+    }
+}
+
+/// One line about the sun, the moon or a planet.
+fn describe_body(name: &str, ra: f64, dec: f64, at: Moment) -> String {
+    let kind = match name {
+        "sun" => "our star".to_string(),
+        "moon" => format!("{}% lit", orbit::moon_phase_pct(at.year, at.month, at.day)),
+        _ => "planet".to_string(),
+    };
+    let hours = ra.rem_euclid(360.0) / 15.0;
+    format!(
+        "{} · {} · RA {}h {:02}m · Dec {:+.1}°",
+        crate::photo::body_name(name),
+        kind,
+        hours as u32,
+        (hours.fract() * 60.0) as u32,
+        dec
+    )
+}
+
+fn describe_target(t: &Target, at: Moment) -> String {
+    match t {
+        Target::Dso(d) => describe(d),
+        Target::Body(name, ra, dec) => describe_body(name, *ra, *dec, at),
+    }
+}
+
 /// Angle between two sky positions, in degrees.
 fn sep_deg(ra1: f64, dec1: f64, ra2: f64, dec2: f64) -> f64 {
     let (d1, d2) = (dec1.to_radians(), dec2.to_radians());
@@ -212,7 +268,7 @@ pub fn run(
     let mut set = if opts.circles { fields() } else { Vec::new() };
     let mut note = String::new();
     // The object the note describes: Enter again shows its picture.
-    let mut described: Option<&'static starmap::Dso> = None;
+    let mut described: Option<Target> = None;
     loop {
         let (cols, rows) = Crust::terminal_size();
         Crust::clear_screen();
@@ -227,7 +283,7 @@ pub fn run(
 
         let Some(key) = Input::getchr(None) else { continue };
         let shown = described.take();
-        let (view, _) = looking(moments[index], lat, lon, tz, opts);
+        let (view, bodies) = looking(moments[index], lat, lon, tz, opts);
         // Arrows walk the crosshair a tenth of the screen at a time.
         let walk = |dx: f64, dy: f64, opts: &mut Opts| {
             let step = 0.1 / opts.zoom;
@@ -283,9 +339,16 @@ pub fn run(
                 let (cols, rows) = Crust::terminal_size();
                 let mut p = crust::Pane::new(1, rows, cols, 1, 255, 236);
                 p.scroll = false;
-                let asked = p.ask_or_cancel(" Go to (M31, C14, NGC 7000, a name): ", "").unwrap_or_default();
-                if let Some(d) = find(&asked) {
-                    described = Some(d);
+                let asked = p.ask_or_cancel(" Go to (M31, C14, NGC 7000, a name, a planet): ", "").unwrap_or_default();
+                let body = bodies.iter().find(|b| !asked.trim().is_empty() && b.name.eq_ignore_ascii_case(asked.trim()));
+                if let Some(b) = body {
+                    opts.centre = Some((b.ra, b.dec));
+                    opts.zoom = 60.0;
+                    let t = body_target(b);
+                    note = format!("{}   (⏎ again: its picture)", describe_target(&t, moments[index]));
+                    described = Some(t);
+                } else if let Some(d) = find(&asked) {
+                    described = Some(Target::Dso(d));
                     opts.centre = Some((d.ra, d.dec));
                     // Close in until the object, or the widest eyepiece
                     // circle, fills about a third of the screen height.
@@ -294,7 +357,7 @@ pub fn run(
                     opts.zoom = (180.0 / span).clamp(1.5, 400.0);
                     note = format!("{}   (⏎ again: its picture)", describe(d));
                 } else if !asked.trim().is_empty() {
-                    note = format!("No Messier or Caldwell object called {}", asked.trim());
+                    note = format!("No Messier or Caldwell object or planet called {}", asked.trim());
                 }
             }
             "a" => {
@@ -316,7 +379,7 @@ pub fn run(
                 let all = fields();
                 if let Some(d) = display.as_mut() { d.clear_all(); }
                 if let Some(d) = crate::plan::run(&mut night, &all) {
-                    described = Some(d);
+                    described = Some(Target::Dso(d));
                     opts.centre = Some((d.ra, d.dec));
                     let widest = set.iter().map(|f| f.radius_deg * 2.0).fold(0.0, f64::max);
                     let span = (d.major / 60.0).max(widest).max(0.3) * 3.0;
@@ -326,20 +389,25 @@ pub fn run(
             }
             "ENTER" => match shown {
                 // Enter again: the object's picture, in a box over the chart.
-                Some(d) => {
+                Some(t) => {
                     if let Some(disp) = display.as_mut() { disp.clear_all(); }
-                    match crate::photo::show(d, opts.flip, opts.real, opts.bortle) {
+                    let subject = match &t {
+                        Target::Dso(d) => crate::photo::Subject::Dso(d),
+                        Target::Body(name, _, _) => crate::photo::Subject::Body(name),
+                    };
+                    match crate::photo::show(subject, opts.flip, opts.real, opts.bortle) {
                         Ok((flip, real)) => { opts.flip = flip; opts.real = real; }
                         Err(e) => note = e,
                     }
                 }
                 None => {
-                    note = match under_crosshair(&view, opts.zoom) {
-                        Some(d) => {
-                            described = Some(d);
-                            format!("{}   (⏎ again: its picture)", describe(d))
+                    note = match target_under_crosshair(&view, opts.zoom, &bodies) {
+                        Some(t) => {
+                            let line = format!("{}   (⏎ again: its picture)", describe_target(&t, moments[index]));
+                            described = Some(t);
+                            line
                         }
-                        None => "No Messier or Caldwell object under the crosshair".into(),
+                        None => "Nothing to show under the crosshair: no Messier or Caldwell object, planet, Sun or Moon".into(),
                     };
                 }
             },

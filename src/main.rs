@@ -98,6 +98,7 @@ fn main() {
                 if app.current_image.is_some() { app.refresh_image(); }
             }
             "T" => { app.show_gear_tonight(); }
+            "C-A" => app.claude(),
             "ESC" => { app.hide_image(); }
             "?" => app.show_help(),
             "UP" | "k" => { app.move_row(-1); app.render_all(); }
@@ -130,6 +131,10 @@ fn main() {
     Crust::cleanup();
     Crust::clear_screen();
 }
+
+/// How astro opens a Claude session (Ctrl+A, as in every Fe2O3 app).
+pub const CLAUDE_INTRO: &str = "I am in astro, my app for planning a night at the telescope. \
+    My telescopes and eyepieces are in ~/.astro/gear.json, my settings in ~/.astro/config.yml.";
 
 struct PlanetData {
     table: String,
@@ -836,6 +841,40 @@ impl App {
         self.image_display = None;
     }
 
+    /// Ctrl+A, as in every Fe2O3 app: a Claude session about the front
+    /// page, the forecast and the selected hour.
+    fn claude(&mut self) {
+        let had_image = self.current_image.is_some();
+        if had_image { self.clear_image(); }
+        self.clear_sky();
+        let started = crust::claude_session("Astro", CLAUDE_INTRO, &self.claude_context());
+        Crust::clear_screen();
+        self.header.full_refresh();
+        self.titles.full_refresh();
+        self.left.full_refresh();
+        self.main_p.full_refresh();
+        self.footer.full_refresh();
+        self.render_all();
+        if self.current_image.is_some() { self.refresh_image(); }
+        if !started { self.footer_say(" claude is not on the PATH", 196); }
+    }
+
+    fn claude_context(&self) -> String {
+        let plain = |p: &Pane| crust::strip_ansi(p.text());
+        let c = &self.cfg;
+        let mut ctx = format!(
+            "Sky mode, the front page. {} (lat {:.2}, lon {:.2}), Bortle {:.1}.\n\
+             A good hour has clouds under {}%, humidity under {}%, over {}°C and wind under {} m/s.\n",
+            c.location, c.lat, c.lon, c.bortle, c.cloud_limit, c.humidity_limit, c.temp_limit, c.wind_limit,
+        );
+        if let Some(h) = self.hours.get(self.index) {
+            ctx.push_str(&format!("\nThe selected hour: {} {}:00\n", h.date, h.hour_str));
+        }
+        ctx.push_str(&format!("{}\n{}\n", plain(&self.header), plain(&self.main_p)));
+        ctx.push_str(&format!("\nThe forecast, one row per hour:\n{}\n{}\n", plain(&self.titles), plain(&self.left)));
+        ctx
+    }
+
     fn show_help(&mut self) {
         let help = "\n  \
             astro v0.1.x — Sky mode\n  \
@@ -848,6 +887,7 @@ impl App {
             VIEW\n  \
               g       Switch to Gear mode\n  \
               T       Tonight's gear suggestions (for currently-visible bodies)\n  \
+              Ctrl-A  Ask Claude about what is on screen (in any mode)\n  \
               s       Sky chart for the selected hour (drawn here)\n  \
                         ←/→ hour · ↑/↓ day · c lines · n names · +/- magnitude\n  \
               A       Astronomy Picture of the Day; A again or ESC puts the sky back\n  \

@@ -192,6 +192,7 @@ The merge unlocks features neither standalone app could:
 | `?` | Help (centered popup) |
 | `g` | Switch to Gear mode |
 | `T` | Tonight's gear suggestions popup |
+| `Ctrl-A` | A Claude session about the forecast and the selected hour (`claude` on the PATH); `/exit` comes back |
 | `UP` / `DOWN`, `k` / `j` | Move row |
 | `PgUP` / `PgDOWN`, `K` / `J` | Page |
 | `HOME` / `END` | First / last hour |
@@ -220,6 +221,7 @@ The merge unlocks features neither standalone app could:
 | `j` / `k` | A day on / back |
 | arrows | Move the crosshair over the sky; the view follows it through the hours |
 | `+` / `-` | Zoom in / out |
+| `Ctrl-A` | A Claude session about the chart and what is under the crosshair |
 | `/` | Go to an object: `M31`, `C14`, `NGC 7000`, part of a name, or the Sun, the Moon or a planet by name |
 | `ENTER` | What is under the crosshair: kind, magnitude, size, constellation; for the Sun, the Moon or a planet, where it is (and how much of the Moon is lit) |
 | `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/` |
@@ -275,6 +277,7 @@ The Sun, the Moon and the planets move across the survey's plates, so they get t
 | `A` | Tag all |
 | `u` | Untag all |
 | `o` | Toggle sort (APP / FL) |
+| `Ctrl-A` | A Claude session about the gear on screen |
 | `Ctrl-O` | Create observation log from tagged equipment (auto-filled with Sky-mode context) |
 | `x` | Export tagged items to CSV |
 | `X` | Export all items to JSON |

@@ -419,6 +419,23 @@ pub fn run(
                 if let Some(d) = display.as_mut() { d.clear_all(); }
                 return index;
             }
+            // Ctrl+A, as in every Fe2O3 app: a Claude session about the
+            // chart and what sits under the crosshair.
+            "C-A" => {
+                if let Some(d) = display.as_mut() { d.clear_all(); }
+                let m = moments[index];
+                let what = target_under_crosshair(&view, opts.zoom, &bodies)
+                    .map(|t| describe_target(&t, m))
+                    .unwrap_or_else(|| "no named object".into());
+                let ctx = format!(
+                    "The sky chart for {place}, {:04}-{:02}-{:02} {:02}:00 (lat {lat:.2}, lon {lon:.2}), zoomed {:.0}×.\n\
+                     Under the crosshair: {what}\n",
+                    m.year, m.month, m.day, m.hour, opts.zoom,
+                );
+                if !crust::claude_session("Astro", crate::CLAUDE_INTRO, &ctx) {
+                    note = "claude is not on the PATH".into();
+                }
+            }
             "l" => index = (index + 1).min(moments.len() - 1),
             "h" => index = index.saturating_sub(1),
             "j" | "PgDOWN" => index = (index + 24).min(moments.len() - 1),

@@ -72,6 +72,7 @@ pub fn run(env: super::SkyEnv) -> bool {
             "o" => { app.toggle_sort(); app.render_all(); }
             "D" => { app.delete_selected(); app.render_all(); }
             "C-O" => { app.create_observation_log(); }
+            "C-A" => app.claude(),
             "x" => { app.export_csv(); }
             "X" => { app.export_json(); }
             "r" => { app.render_all(); }
@@ -1156,6 +1157,7 @@ impl App {
               F            List the eyepiece set; x takes a pair out\n  \
               A            Tag all in the focused pane\n  \
               u            Untag all (across every pane)\n  \
+              Ctrl-A       Ask Claude about the gear on screen\n  \
               Ctrl-O       Create observation log from tagged equipment.\n  \
                            Auto-fills date/location/weather/Bortle from Sky\n  \
                            mode, lists tagged scopes/EPs/misc, builds a\n  \
@@ -1184,6 +1186,22 @@ impl App {
         let mut popup = crust::Popup::centered(w, h, 252, 234);
         popup.view(&help);
         self.repaint();
+    }
+
+    /// Ctrl+A, as in every Fe2O3 app: a Claude session about the gear
+    /// on screen.
+    fn claude(&mut self) {
+        let plain = |p: &Pane| crust::strip_ansi(p.text());
+        let ctx = format!(
+            "Gear mode: my telescopes, eyepieces and other gear.\n\n\
+             Telescopes:\n{}\n{}\n\nEyepieces (suited to the selected telescope):\n{}\n{}\n\n\
+             The eyepiece set:\n{}\n{}\n\nOther gear:\n{}\n{}\n",
+            plain(&self.ts_head), plain(&self.ts), plain(&self.ep_head), plain(&self.ep),
+            plain(&self.combo_head), plain(&self.combo), plain(&self.misc_head), plain(&self.misc),
+        );
+        let started = crust::claude_session("Astro", crate::CLAUDE_INTRO, &ctx);
+        self.repaint();
+        if !started { self.status_say(" claude is not on the PATH", 196); self.render_footer(); }
     }
 
     /// Redraw everything after a popup. Wipe the screen first so the

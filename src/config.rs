@@ -51,6 +51,9 @@ pub struct Config {
     pub show_planets: bool,
     #[serde(default = "default_true")]
     pub show_events: bool,
+    /// Pictures open as the eyepiece shows them (the `r` toggle).
+    #[serde(default)]
+    pub eyepiece_view: bool,
 }
 
 fn default_cloud() -> i64 { 40 }
@@ -76,6 +79,7 @@ impl Default for Config {
             bortle: default_bortle(),
             show_planets: true,
             show_events: true,
+            eyepiece_view: false,
         }
     }
 }

@@ -223,7 +223,7 @@ The merge unlocks features neither standalone app could:
 | `/` | Go to an object: `M31`, `C14`, `NGC 7000`, part of a name, or the Sun, the Moon or a planet by name |
 | `ENTER` | What is under the crosshair: kind, magnitude, size, constellation; for the Sun, the Moon or a planet, where it is (and how much of the Moon is lit) |
 | `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/` |
-| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object |
+| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object, and after astro restarts |
 | `e` in the eyepiece view | The next combination of your eyepiece set |
 | `+` `-` in the eyepiece view | Lean in and back: the middle of the field up to 8× larger. A small field on a screen looks smaller than the same field filling the eyepiece; this makes up for it |
 | `v` | The eyepiece set's circles round the crosshair, with a legend |

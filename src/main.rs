@@ -174,6 +174,8 @@ struct App {
 impl App {
     fn new(cfg: Config) -> Self {
         let cfg_bortle = cfg.bortle;
+        let mut sky_opts = sky::Opts::for_bortle(cfg_bortle);
+        sky_opts.real = cfg.eyepiece_view;
         let (cols, rows) = Crust::terminal_size();
         let today = date_util::today();
         let panes = Self::build_panes(cols, rows);
@@ -195,19 +197,20 @@ impl App {
             current_image: None,
             event_rx: None,
             image_rx: None,
-            sky_opts: sky::Opts::for_bortle(cfg_bortle),
+            sky_opts,
         }
     }
 
     fn build_panes(cols: u16, rows: u16) -> (Pane, Pane, Pane, Pane, Pane) {
         // Astropanel-style: left pane starts at x=2 to give a 1-col left
         // margin and align data rows with the header's leading space.
-        // Every pane is pure black (16), the black of the sky chart.
+        // The panes between the top row and the key line are pure black
+        // (16), the black of the sky chart.
         let left_w: u16 = 70.min(cols.saturating_sub(20));
         let main_x: u16 = left_w + 4;
         let main_w: u16 = cols.saturating_sub(main_x);
         let content_h: u16 = rows.saturating_sub(3);
-        let mut header = Pane::new(1, 1, cols, 1, 255, 16);
+        let mut header = Pane::new(1, 1, cols, 1, 255, 236);
         header.wrap = false;
         let mut titles = Pane::new(1, 2, cols, 1, 255, 16);
         titles.wrap = false;
@@ -215,7 +218,7 @@ impl App {
         left.wrap = false;
         let mut main_p = Pane::new(main_x, 3, main_w, content_h, 255, 16);
         main_p.wrap = false;
-        let mut footer = Pane::new(1, rows, cols, 1, 255, 16);
+        let mut footer = Pane::new(1, rows, cols, 1, 255, 24);
         footer.wrap = false;
         (header, titles, left, main_p, footer)
     }
@@ -752,6 +755,10 @@ impl App {
             &moments, self.index, self.cfg.lat, self.cfg.lon, self.cfg.tz,
             &place, &mut self.sky_opts, &mut self.image_display,
         );
+        if self.cfg.eyepiece_view != self.sky_opts.real {
+            self.cfg.eyepiece_view = self.sky_opts.real;
+            self.cfg.save();
+        }
         // Same resume dance as Gear mode: the panes' prev_frame still
         // claims the old content, so a plain render would diff-skip the
         // rows the chart overwrote.

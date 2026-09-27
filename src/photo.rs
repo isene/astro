@@ -9,11 +9,14 @@
 //!
 //! `r` swaps the photo for the eyepiece view: a plate of the Digitized
 //! Sky Survey cut to what the eyepiece shows, grey and dimmed the way
-//! the eye sees a faint object through that telescope.
+//! the eye sees a faint object through that telescope. The sun, the
+//! moon and a planet get their true size in the field instead, lit from
+//! the side the sun is on; the sun as today's white-light picture from
+//! the SDO satellite, the view a solar filter gives.
 
 use crate::sky::Field;
 use crust::{Crust, Input, Popup};
-use image::{imageops::FilterType, DynamicImage, GrayImage, Luma};
+use image::{imageops::FilterType, DynamicImage, GrayImage, Luma, Rgb, RgbImage};
 use starmap::Dso;
 use std::io::Read;
 use std::path::PathBuf;
@@ -58,25 +61,44 @@ impl Flip {
 const AGENT: &str = "astro (https://github.com/isene/astro)";
 
 /// What the picture box shows: a deep-sky object, or the sun, the moon
-/// or a planet by its lower-case name ("jupiter").
+/// or a planet by its lower-case name ("jupiter") and where it stands.
 #[derive(Clone, Copy)]
 pub enum Subject<'a> {
     Dso(&'a Dso),
-    Body(&'a str),
+    Body(&'a str, Stance),
+}
+
+/// Where the sun, the moon or a planet stands, for its eyepiece view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stance {
+    /// How big it looks, in degrees across; Saturn across its rings.
+    pub size_deg: f64,
+    /// The angle sun, body, earth: 0 is full, 180 is new.
+    pub phase_deg: f64,
+    /// Which way the sun lies from it on the sky, from north through east.
+    pub sun_pa_deg: f64,
 }
 
 impl Subject<'_> {
     fn label(&self) -> String {
         match self {
             Subject::Dso(d) => d.id.to_string(),
-            Subject::Body(n) => body_name(n),
+            Subject::Body(n, _) => body_name(n),
+        }
+    }
+
+    /// How big it looks, for picking the eyepiece that frames it.
+    fn size_deg(&self) -> f64 {
+        match self {
+            Subject::Dso(d) => d.major / 60.0,
+            Subject::Body(_, st) => st.size_deg,
         }
     }
 
     fn titles(&self) -> Vec<String> {
         match self {
             Subject::Dso(d) => titles(d),
-            Subject::Body(n) => vec![body_article(n)],
+            Subject::Body(n, _) => vec![body_article(n)],
         }
     }
 }
@@ -96,7 +118,7 @@ fn cache_path(s: &Subject) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let (dir, key) = match s {
         Subject::Dso(d) => ("dso", d.id.to_string()),
-        Subject::Body(n) => ("body", n.to_string()),
+        Subject::Body(n, _) => ("body", n.to_string()),
     };
     PathBuf::from(home).join(".astro/images").join(dir).join(format!("{key}.img"))
 }
@@ -257,8 +279,8 @@ fn survey(d: &Dso, fov: f64) -> Result<Vec<u8>, String> {
 /// The eyepiece to look at `d` through: the set's combo with the
 /// smallest field that still holds the object with room round it, else
 /// the widest one.
-fn best_field(fields: &[Field], d: &Dso) -> usize {
-    let want = d.major / 60.0 * 1.5;
+fn best_field(fields: &[Field], size_deg: f64) -> usize {
+    let want = size_deg * 1.5;
     let mut order: Vec<usize> = (0..fields.len()).collect();
     order.sort_by(|&a, &b| fields[a].radius_deg.total_cmp(&fields[b].radius_deg));
     order.iter().copied().find(|&i| fields[i].radius_deg * 2.0 >= want).or(order.last().copied()).unwrap_or(0)
@@ -266,8 +288,8 @@ fn best_field(fields: &[Field], d: &Dso) -> usize {
 
 /// A stand-in when the eyepiece set is empty: a 100 mm telescope with a
 /// field three times the object's size.
-fn stand_in(d: &Dso) -> Field {
-    let fov = (d.major / 60.0 * 3.0).clamp(0.5, 4.0);
+fn stand_in(size_deg: f64) -> Field {
+    let fov = (size_deg * 3.0).clamp(0.5, 4.0);
     Field {
         label: format!("no eyepiece set (f in Gear mode): 100 mm, {fov:.1}°"),
         rgb: (0, 0, 0),
@@ -333,6 +355,145 @@ pub fn eyepiece_view(plate: &Plate, aperture: f64, bortle: f64) -> DynamicImage 
     DynamicImage::ImageLuma8(soft)
 }
 
+/// Today's white light from the sun, as the SDO satellite's HMI camera
+/// sees it: the view through a solar filter, spots and all. Kept for
+/// twelve hours, since the spots move and change from day to day.
+fn sun_today() -> Result<Vec<u8>, String> {
+    let path = cache_path(&Subject::Body("sun", Stance { size_deg: 0.0, phase_deg: 0.0, sun_pa_deg: 0.0 }))
+        .with_file_name("sun-hmi.jpg");
+    let fresh = std::fs::metadata(&path).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < Duration::from_secs(12 * 3600));
+    if fresh {
+        if let Ok(b) = std::fs::read(&path) {
+            return Ok(b);
+        }
+    }
+    let mut bytes = Vec::new();
+    let got = ureq::get("https://sdo.gsfc.nasa.gov/assets/img/latest/latest_1024_HMII.jpg")
+        .set("User-Agent", AGENT).timeout(Duration::from_secs(30)).call()
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.into_reader().take(8 << 20).read_to_end(&mut bytes).map_err(|e| e.to_string()));
+    match got {
+        Ok(_) => {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&path, &bytes);
+            Ok(bytes)
+        }
+        // Yesterday's sun beats none.
+        Err(e) => std::fs::read(&path).map_err(|_| format!("the SDO satellite's picture of the sun would not download: {e}")),
+    }
+}
+
+/// Where the body is in its photo: the longest run of rows and of
+/// columns with light in them, so a caption line does not count.
+/// Gives the box as (left, top, width, height).
+fn find_disk(img: &RgbImage) -> Option<(u32, u32, u32, u32)> {
+    let (w, h) = img.dimensions();
+    let lit = |p: &Rgb<u8>| (p[0] as u32 + p[1] as u32 + p[2] as u32) > 90;
+    let mut rows = vec![0u32; h as usize];
+    let mut cols = vec![0u32; w as usize];
+    for (x, y, p) in img.enumerate_pixels() {
+        if lit(p) {
+            rows[y as usize] += 1;
+            cols[x as usize] += 1;
+        }
+    }
+    let run = |counts: &[u32], min: u32| -> Option<(u32, u32)> {
+        let (mut best, mut start) = (None::<(u32, u32)>, None::<u32>);
+        for (i, &c) in counts.iter().chain(std::iter::once(&0)).enumerate() {
+            match (c > min, start) {
+                (true, None) => start = Some(i as u32),
+                (false, Some(s0)) => {
+                    let len = i as u32 - s0;
+                    if best.is_none_or(|(_, l)| len > l) {
+                        best = Some((s0, len));
+                    }
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        best
+    };
+    let (top, height) = run(&rows, (w / 100).max(1))?;
+    let (left, width) = run(&cols, (h / 100).max(1))?;
+    Some((left, top, width, height))
+}
+
+/// The sun, the moon or a planet as the eyepiece shows it: its picture
+/// cut to the body, at its true size in the field, lit from the side
+/// the sun is on (a thin crescent for Venus near the sun, a gibbous
+/// Mars), softened by the air or the telescope's own limit, whichever
+/// is coarser, on the night sky in the round field stop. The sun shows
+/// orange, as a glass solar filter shows it, on black.
+pub fn body_view(picture: &DynamicImage, name: &str, st: Stance, field: &Field, bortle: f64) -> DynamicImage {
+    const N: u32 = 800;
+    let fov = field.radius_deg * 2.0;
+    let sun = name == "sun";
+    let sky = if sun { 0 } else { (4.0 + 2.0 * bortle.clamp(1.0, 9.0)) as u8 };
+    let mut out = RgbImage::from_pixel(N, N, Rgb([sky, sky, sky]));
+    let rgb = picture.to_rgb8();
+    if let Some((left, top, bw, bh)) = find_disk(&rgb) {
+        // Across the body on the plate, in pixels; the height keeps the
+        // picture's own shape (Saturn is wider than tall).
+        let across = st.size_deg / fov * N as f64;
+        let tall = across * bh as f64 / bw as f64;
+        let body = image::imageops::crop_imm(&rgb, left, top, bw, bh).to_image();
+        let (tw, th) = (across.round().max(1.0) as u32, tall.round().max(1.0) as u32);
+        let body = image::imageops::resize(&body, tw, th, if tw < bw { FilterType::Triangle } else { FilterType::CatmullRom });
+        // The sun's direction in the body's frame: x right (west), y up
+        // (north), z toward us.
+        let (i, pa) = (st.phase_deg.to_radians(), st.sun_pa_deg.to_radians());
+        let s = (i.sin() * -pa.sin(), i.sin() * pa.cos(), i.cos());
+        // Saturn's globe is a part of its rings' width.
+        let globe = if name == "saturn" { 1.0 / 2.27 } else { 1.0 };
+        let night = if name == "moon" { 0.04 } else { 0.0 };
+        // Faint dots: one the size of a pixel or less keeps its light.
+        let spread = if across < 1.0 { across * across } else { 1.0 };
+        let (ox, oy) = ((N as f64 - tw as f64) / 2.0, (N as f64 - th as f64) / 2.0);
+        for (bx, by, p) in body.enumerate_pixels() {
+            let x = ((bx as f64 + 0.5) / tw as f64 * 2.0 - 1.0) / globe;
+            let y = (1.0 - (by as f64 + 0.5) / th as f64 * 2.0) * (th as f64 / tw as f64) / globe;
+            let rr = x * x + y * y;
+            // Past the globe's edge is Saturn's rings, lit whole; on any
+            // other body it is the edge itself, dark on the night side.
+            let lit = if rr <= 1.0 || name != "saturn" {
+                let z = (1.0 - rr).max(0.0).sqrt();
+                let toward = x * s.0 + y * s.1 + z * s.2;
+                night + (1.0 - night) * (toward * 5.0).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let tint = if sun { [1.0, 0.72, 0.38] } else { [1.0, 1.0, 1.0] };
+            let (px, py) = ((ox + bx as f64) as u32, (oy + by as f64) as u32);
+            if px < N && py < N {
+                let o = out.get_pixel_mut(px, py);
+                for c in 0..3 {
+                    let v = (p[c] as f64 * lit * spread * tint[c]).round().min(255.0) as u8;
+                    o[c] = o[c].max(v);
+                }
+            }
+        }
+    }
+    // The air, or the telescope's own limit, whichever is coarser: two
+    // arcseconds of seeing, or 116 / aperture (Dawes).
+    let sharp = 2.0f64.max(116.0 / field.aperture.max(20.0));
+    let sigma = sharp / (fov * 3600.0 / N as f64) / 2.355;
+    if sigma > 0.3 {
+        out = image::imageops::blur(&out, sigma as f32);
+    }
+    let (c, r) = (N as f64 / 2.0, N as f64 / 2.0);
+    for (x, y, p) in out.enumerate_pixels_mut() {
+        if (x as f64 + 0.5 - c).hypot(y as f64 + 0.5 - r) > r {
+            *p = Rgb([0, 0, 0]);
+        }
+    }
+    DynamicImage::ImageRgb8(out)
+}
+
 /// The picture turned by `flip` and fitted, whole, into a canvas of
 /// `cols` by `rows` cells, in the middle on black.
 fn fit(img: &DynamicImage, flip: Flip, cols: u16, rows: u16, cell: Option<(u16, u16)>) -> glow::Canvas {
@@ -350,8 +511,8 @@ fn fit(img: &DynamicImage, flip: Flip, cols: u16, rows: u16, cell: Option<(u16, 
 /// its photo, or for a deep-sky object with `real` the eyepiece view.
 /// `f` turns it, `r` swaps the two, `e` steps through the eyepiece set.
 /// Gives back the turn and the choice, so the next object keeps them.
-/// A survey plate cannot show the sun, the moon or a planet, which move
-/// across it, so they have the photo alone.
+/// The sun, the moon and a planet get their own eyepiece view: a survey
+/// plate cannot hold them, since they move across it.
 pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(Flip, bool), String> {
     let mut display = glow::Display::new();
     if !display.supported() {
@@ -364,7 +525,7 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
     popup.pane.wrap = false;
     let dso = match s {
         Subject::Dso(d) => Some(d),
-        Subject::Body(_) => None,
+        Subject::Body(..) => None,
     };
     let title = match dso {
         Some(d) if !d.name.is_empty() => format!(" {} {}", d.id, d.name),
@@ -377,23 +538,32 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
         lines.join("\n")
     };
 
-    let mut fields = if dso.is_some() { crate::sky::fields() } else { Vec::new() };
-    if let (true, Some(d)) = (fields.is_empty(), dso) {
-        fields.push(stand_in(d));
+    let mut fields = crate::sky::fields();
+    if fields.is_empty() {
+        fields.push(stand_in(s.size_deg()));
     }
-    let mut pick = dso.map(|d| best_field(&fields, d)).unwrap_or(0);
+    let mut pick = best_field(&fields, s.size_deg());
     let mut photo: Option<Result<DynamicImage, String>> = None;
     let mut plates: Vec<Option<Result<DynamicImage, String>>> = (0..fields.len()).map(|_| None).collect();
     let (x, y) = (popup.pane.x, popup.pane.y + 1);
     loop {
-        let eyepiece = real && dso.is_some();
-        let loaded = if let (true, Some(d)) = (eyepiece, dso) {
+        let eyepiece = real;
+        let loaded = if eyepiece {
             let f = &fields[pick];
-            plates[pick].get_or_insert_with(|| {
-                popup.show(&text(" fetching the sky survey plate …"));
-                survey(d, f.radius_deg * 2.0)
-                    .and_then(|b| read_fits(&b))
-                    .map(|plate| eyepiece_view(&plate, f.aperture, bortle))
+            plates[pick].get_or_insert_with(|| match s {
+                Subject::Dso(d) => {
+                    popup.show(&text(" fetching the sky survey plate …"));
+                    survey(d, f.radius_deg * 2.0)
+                        .and_then(|b| read_fits(&b))
+                        .map(|plate| eyepiece_view(&plate, f.aperture, bortle))
+                }
+                Subject::Body(name, st) => {
+                    popup.show(&text(" fetching the picture …"));
+                    let bytes = if name == "sun" { sun_today() } else { picture(&s) };
+                    bytes
+                        .and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
+                        .map(|img| body_view(&img, name, st, f, bortle))
+                }
             })
         } else {
             photo.get_or_insert_with(|| {
@@ -401,12 +571,15 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
                 picture(&s).and_then(|b| image::load_from_memory(&b).map_err(|e| format!("the picture of {} is unreadable: {e}", s.label())))
             })
         };
+        let credit = match s {
+            Subject::Body("sun", _) => "only through a solar filter    SDO",
+            Subject::Body(..) => "picture: Wikipedia",
+            Subject::Dso(_) => "sky: DSS2 via CDS",
+        };
         let foot = match (&loaded, eyepiece) {
-            (Err(e), _) if dso.is_none() => format!(" {e}    q  close"),
             (Err(e), _) => format!(" {e}    r  {}    q  close", if real { "photo" } else { "eyepiece view" }),
-            (Ok(_), false) if dso.is_none() => format!(" f  {}    q  close    picture: Wikipedia", flip.label()),
             (Ok(_), true) => format!(
-                " f  {}    r  photo    e  next eyepiece    q  close    {}    sky: DSS2 via CDS",
+                " f  {}    r  photo    e  next eyepiece    q  close    {}    {credit}",
                 flip.label(), field_note(&fields[pick])
             ),
             (Ok(_), false) => format!(" f  {}    r  eyepiece view    q  close    picture: Wikipedia", flip.label()),
@@ -418,7 +591,7 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
         }
         match Input::getchr(None).as_deref() {
             Some("f") => flip = flip.next(),
-            Some("r") if dso.is_some() => real = !real,
+            Some("r") => real = !real,
             Some("e") if eyepiece => pick = (pick + 1) % fields.len(),
             Some("q") | Some("ESC") | Some("ENTER") | None => break,
             _ => {}
@@ -427,6 +600,15 @@ pub fn show(s: Subject, mut flip: Flip, mut real: bool, bortle: f64) -> Result<(
     display.clear(popup.pane.x, popup.pane.y, w, h, cols, rows);
     popup.dismiss(&mut []);
     Ok((flip, real))
+}
+
+/// The eyepiece view of a body from its real picture, for tests that
+/// write it out to look at.
+#[cfg(test)]
+pub fn body_view_for_test(name: &str, st: Stance, field: &Field) -> DynamicImage {
+    let s = Subject::Body(name, st);
+    let bytes = if name == "sun" { sun_today() } else { picture(&s) }.expect("fetched");
+    body_view(&image::load_from_memory(&bytes).expect("decodes"), name, st, field, 4.0)
 }
 
 #[cfg(test)]
@@ -440,9 +622,10 @@ mod tests {
     #[test]
     fn a_body_has_its_own_article_and_its_own_shelf() {
         assert_eq!(body_name("jupiter"), "Jupiter");
-        assert_eq!(Subject::Body("mercury").titles(), ["Mercury (planet)"]);
-        assert_eq!(Subject::Body("moon").titles(), ["Moon"]);
-        assert!(cache_path(&Subject::Body("sun")).ends_with(".astro/images/body/sun.img"));
+        let st = Stance { size_deg: 0.01, phase_deg: 0.0, sun_pa_deg: 0.0 };
+        assert_eq!(Subject::Body("mercury", st).titles(), ["Mercury (planet)"]);
+        assert_eq!(Subject::Body("moon", st).titles(), ["Moon"]);
+        assert!(cache_path(&Subject::Body("sun", st)).ends_with(".astro/images/body/sun.img"));
     }
 
     #[test]
@@ -512,6 +695,27 @@ mod tests {
         assert!(v.pixels().all(|p| p[0] <= 200), "the eye never sees white");
     }
 
+    /// A grey ball on black: the half toward the sun lit, the rest dark,
+    /// at the size the field gives it.
+    #[test]
+    fn a_body_is_its_true_size_and_lit_from_the_sun() {
+        let ball = DynamicImage::ImageRgb8(RgbImage::from_fn(200, 200, |x, y| {
+            let (dx, dy) = (x as f64 - 99.5, y as f64 - 99.5);
+            if dx.hypot(dy) < 80.0 { Rgb([200, 200, 200]) } else { Rgb([0, 0, 0]) }
+        }));
+        let field = Field { label: String::new(), rgb: (0, 0, 0), radius_deg: 0.5, aperture: 150.0, power: 100.0 };
+        // Half lit, the sun to the east: the left half of the disk.
+        let st = Stance { size_deg: 0.5, phase_deg: 90.0, sun_pa_deg: 90.0 };
+        let v = body_view(&ball, "moon", st, &field, 4.0).to_rgb8();
+        let at = |x: u32, y: u32| v.get_pixel(x, y)[0];
+        assert!(at(300, 400) > 150, "the east (left) half is lit");
+        assert!(at(500, 400) < 40, "the west half is dark");
+        assert!(at(300, 150) < 30 && at(300, 250) > 100, "half the field wide: 400 across of 800");
+        assert_eq!(at(0, 0), 0, "outside the field stop");
+        let (l, _, w, _) = find_disk(&ball.to_rgb8()).unwrap();
+        assert!((18..=22).contains(&l) && (155..=162).contains(&w), "the disk found at {l}, {w} wide");
+    }
+
     #[test]
     fn a_fits_plate_reads_with_the_bottom_row_last() {
         let mut f = Vec::new();
@@ -535,9 +739,9 @@ mod tests {
         let f = |deg: f64| Field { label: String::new(), rgb: (0, 0, 0), radius_deg: deg / 2.0, aperture: 150.0, power: 50.0 };
         let set = [f(2.0), f(0.5), f(1.0)];
         // M57 is about 1.4 arcminutes: the narrowest field frames it.
-        assert_eq!(best_field(&set, dso("M57")), 1);
+        assert_eq!(best_field(&set, dso("M57").major / 60.0), 1);
         // M31 is three degrees: none holds it, so the widest.
-        assert_eq!(best_field(&set, dso("M31")), 0);
+        assert_eq!(best_field(&set, dso("M31").major / 60.0), 0);
     }
 
     #[test]

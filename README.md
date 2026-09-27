@@ -223,7 +223,7 @@ The merge unlocks features neither standalone app could:
 | `/` | Go to an object: `M31`, `C14`, `NGC 7000`, part of a name, or the Sun, the Moon or a planet by name |
 | `ENTER` | What is under the crosshair: kind, magnitude, size, constellation; for the Sun, the Moon or a planet, where it is (and how much of the Moon is lit) |
 | `ENTER` again | Its picture from Wikipedia, in a box in the middle; `f` turns it as the naked eye, a telescope (south up) or a star diagonal (mirrored) shows it, `q` closes. Fetched once, kept in `~/.astro/images/` |
-| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object. Deep-sky objects only: the Sun, the Moon and the planets move across the survey's plates |
+| `r` in the picture | The eyepiece view instead, and back: see below. The choice stays for the next object |
 | `e` in the eyepiece view | The next combination of your eyepiece set |
 | `v` | The eyepiece set's circles round the crosshair, with a legend |
 | `a` | Add the object under the crosshair to the night's plan |
@@ -244,6 +244,14 @@ Photos of deep-sky objects show far more than any eye at a telescope. `r` shows 
 - With no eyepiece set, astro shows a 100 mm telescope with a field three times the object's size.
 
 It is a model of the view, not a photo of it. The plates are kept in `~/.astro/images/dso/`.
+
+The Sun, the Moon and the planets move across the survey's plates, so they get their own eyepiece view:
+
+- Each is at its true size in the field, from its distance tonight. At 50× Jupiter is a small disk and Uranus a dot; at 200× the Moon overflows the field.
+- It is lit from the side the Sun is on: Venus near the Sun is a thin crescent, Mars a little gibbous.
+- The air, or the telescope's own limit, softens it, whichever is coarser.
+- The Sun is today's white-light picture from NASA's SDO satellite, orange as a glass solar filter shows it, spots and all. Look at the Sun only through a proper solar filter over the front of the telescope.
+- The pictures come from Wikipedia, so Saturn's rings are as open as in its photo. In 2026 they are nearly edge-on.
 
 ## Gear-mode keys
 

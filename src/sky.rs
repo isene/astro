@@ -201,6 +201,48 @@ fn describe_body(name: &str, ra: f64, dec: f64, at: Moment) -> String {
     )
 }
 
+/// How big a body looks tonight and how the sun lights it, for its
+/// eyepiece view: its size from its distance, and the angle sun, body,
+/// earth from where the two stand on the sky.
+#[allow(clippy::too_many_arguments)]
+fn stance(name: &str, ra: f64, dec: f64, bodies: &[Body], at: Moment, lat: f64, lon: f64, tz: f64) -> crate::photo::Stance {
+    const AU_KM: f64 = 149_597_870.7;
+    let distance = orbit::all_bodies(at.year, at.month, at.day, lat, lon, tz)
+        .into_iter()
+        .find(|b| b.name == name)
+        .map(|b| b.distance)
+        .unwrap_or(1.0);
+    // The moon's distance comes in earth radii, the rest in AU.
+    let km = if name == "moon" { distance * 6378.14 } else { distance * AU_KM };
+    let radius_km = match name {
+        "sun" => 695_700.0,
+        "moon" => 1_737.4,
+        "mercury" => 2_439.7,
+        "venus" => 6_051.8,
+        "mars" => 3_389.5,
+        "jupiter" => 71_492.0,
+        // Across the rings, which reach 2.27 times the globe.
+        "saturn" => 60_268.0 * 2.27,
+        "uranus" => 25_559.0,
+        "neptune" => 24_764.0,
+        _ => 1.0,
+    };
+    let size_deg = 2.0 * (radius_km / km).atan().to_degrees();
+    let (sra, sdec) = bodies.iter().find(|b| b.name == "sun").map(|b| (b.ra, b.dec)).unwrap_or((ra, dec));
+    let phase_deg = if name == "sun" {
+        0.0
+    } else {
+        // Earth to sun 1 AU, earth to body `d`, sun to body `r`.
+        let (e, d) = (sep_deg(ra, dec, sra, sdec).to_radians(), km / AU_KM);
+        let r = (1.0 + d * d - 2.0 * d * e.cos()).sqrt();
+        ((r * r + d * d - 1.0) / (2.0 * r * d)).clamp(-1.0, 1.0).acos().to_degrees()
+    };
+    let da = (sra - ra).to_radians();
+    let (d1, d2) = (dec.to_radians(), sdec.to_radians());
+    let sun_pa_deg = (da.sin() * d2.cos()).atan2(d1.cos() * d2.sin() - d1.sin() * d2.cos() * da.cos()).to_degrees();
+    crate::photo::Stance { size_deg, phase_deg, sun_pa_deg }
+}
+
 fn describe_target(t: &Target, at: Moment) -> String {
     match t {
         Target::Dso(d) => describe(d),
@@ -393,7 +435,10 @@ pub fn run(
                     if let Some(disp) = display.as_mut() { disp.clear_all(); }
                     let subject = match &t {
                         Target::Dso(d) => crate::photo::Subject::Dso(d),
-                        Target::Body(name, _, _) => crate::photo::Subject::Body(name),
+                        Target::Body(name, ra, dec) => crate::photo::Subject::Body(
+                            name,
+                            stance(name, *ra, *dec, &bodies, moments[index], lat, lon, tz),
+                        ),
                     };
                     match crate::photo::show(subject, opts.flip, opts.real, opts.bortle) {
                         Ok((flip, real)) => { opts.flip = flip; opts.real = real; }
@@ -573,6 +618,45 @@ mod tests {
     }
 
     /// The moon is a body on the chart, and it moves during the day.
+    /// Venus three weeks before it passes the sun is a crescent, lit from
+    /// the sun's side; the moon on 2026-09-27 is full, half a degree wide.
+    #[test]
+    fn a_body_stands_as_the_sky_has_it() {
+        let at = Moment { year: 2026, month: 9, day: 27, hour: 20 };
+        let (_, bodies) = sky_at(at, 59.9, 10.7, 2.0);
+        let get = |n: &str| bodies.iter().find(|b| b.name == n).map(|b| (b.ra, b.dec)).unwrap();
+        let (vra, vdec) = get("venus");
+        let venus = stance("venus", vra, vdec, &bodies, at, 59.9, 10.7, 2.0);
+        assert!((100.0..140.0).contains(&venus.phase_deg), "a crescent: phase angle {}", venus.phase_deg);
+        assert!((35.0 / 3600.0..55.0 / 3600.0).contains(&venus.size_deg), "about 45 arcseconds: {}", venus.size_deg * 3600.0);
+        assert!((200.0..340.0).contains(&venus.sun_pa_deg.rem_euclid(360.0)), "the sun lies west of Venus: {}", venus.sun_pa_deg);
+        let (mra, mdec) = get("moon");
+        let moon = stance("moon", mra, mdec, &bodies, at, 59.9, 10.7, 2.0);
+        assert!(moon.phase_deg < 20.0, "full: {}", moon.phase_deg);
+        assert!((0.48..0.57).contains(&moon.size_deg), "{}", moon.size_deg);
+        let (sra, sdec) = get("sun");
+        assert!((0.52..0.545).contains(&stance("sun", sra, sdec, &bodies, at, 59.9, 10.7, 2.0).size_deg));
+    }
+
+    /// Fetches pictures: `ASTRO_PHOTO_DUMP=dir cargo test -- --ignored body_views`
+    /// writes the sun, the moon and the planets on 2026-09-27 through a
+    /// 150 mm telescope at 50× (2°) and at 200× (0.4°).
+    #[test]
+    #[ignore]
+    fn body_views() {
+        let Ok(dir) = std::env::var("ASTRO_PHOTO_DUMP") else { return };
+        let at = Moment { year: 2026, month: 9, day: 27, hour: 20 };
+        let (_, bodies) = sky_at(at, 59.9, 10.7, 2.0);
+        for b in &bodies {
+            let st = stance(&b.name, b.ra, b.dec, &bodies, at, 59.9, 10.7, 2.0);
+            for (fov, power) in [(2.0, 50.0), (0.4, 200.0)] {
+                let field = Field { label: String::new(), rgb: (0, 0, 0), radius_deg: fov / 2.0, aperture: 150.0, power };
+                let v = crate::photo::body_view_for_test(&b.name, st, &field);
+                v.save(format!("{dir}/{}-{power:.0}.png", b.name)).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn bodies_track_the_hour() {
         let m = |h| {

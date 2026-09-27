@@ -202,19 +202,20 @@ impl App {
     fn build_panes(cols: u16, rows: u16) -> (Pane, Pane, Pane, Pane, Pane) {
         // Astropanel-style: left pane starts at x=2 to give a 1-col left
         // margin and align data rows with the header's leading space.
+        // Every pane is pure black (16), the black of the sky chart.
         let left_w: u16 = 70.min(cols.saturating_sub(20));
         let main_x: u16 = left_w + 4;
         let main_w: u16 = cols.saturating_sub(main_x);
         let content_h: u16 = rows.saturating_sub(3);
-        let mut header = Pane::new(1, 1, cols, 1, 255, 236);
+        let mut header = Pane::new(1, 1, cols, 1, 255, 16);
         header.wrap = false;
-        let mut titles = Pane::new(1, 2, cols, 1, 255, 234);
+        let mut titles = Pane::new(1, 2, cols, 1, 255, 16);
         titles.wrap = false;
-        let mut left = Pane::new(2, 3, left_w, content_h, 248, 232);
+        let mut left = Pane::new(2, 3, left_w, content_h, 248, 16);
         left.wrap = false;
-        let mut main_p = Pane::new(main_x, 3, main_w, content_h, 255, 232);
+        let mut main_p = Pane::new(main_x, 3, main_w, content_h, 255, 16);
         main_p.wrap = false;
-        let mut footer = Pane::new(1, rows, cols, 1, 255, 24);
+        let mut footer = Pane::new(1, rows, cols, 1, 255, 16);
         footer.wrap = false;
         (header, titles, left, main_p, footer)
     }
@@ -865,6 +866,7 @@ impl App {
         // restore on dismiss.
         let had_image = self.current_image.is_some();
         if had_image { self.clear_image(); }
+        self.clear_sky();
         let (cols, rows) = Crust::terminal_size();
         let w = cols.saturating_sub(8).min(78);
         let h = rows.saturating_sub(4).min(34);
@@ -988,6 +990,7 @@ impl App {
         // Image conflict (kitty z=1) — hide image during the popup.
         let had_image = self.current_image.is_some();
         if had_image { self.clear_image(); }
+        self.clear_sky();
 
         let (cols, rows) = Crust::terminal_size();
         let w = cols.saturating_sub(8).min(80);

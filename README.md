@@ -321,6 +321,10 @@ picture as its background.
   once turned off. Started again, it draws at once.
 - `astro --wall --png file.png` draws one picture to look at.
 
+Each star has the colour of its temperature, the same scale as an HR
+diagram from blue to red, pushed twice as far from white as a black body
+so the colours show. The sky chart in the app does the same.
+
 The place and the sky come from `~/.astro/config.yml`, the weather from the
 same cache the app uses. Words are drawn in DejaVu Sans (or Noto or
 Liberation Sans) when one is installed.

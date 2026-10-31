@@ -252,7 +252,7 @@ fn draw(cfg: &Config, w: usize, h: usize, n: &Now, hours: &[Hour]) -> Canvas {
         .map(|b| starmap::altaz(b.1, b.2, lst, cfg.lat).0)
         .unwrap_or(-90.0);
     let day = ((sun_alt + 12.0) / 18.0).clamp(0.0, 1.0);
-    let (top, bottom) = (mix((5, 8, 20), (22, 42, 78), day), mix((2, 3, 9), (9, 20, 40), day));
+    let (top, bottom) = (mix((2, 4, 10), (11, 21, 40), day), mix((1, 1, 4), (4, 10, 20), day));
     for y in 0..h {
         let rgb = mix(top, bottom, y as f64 / h as f64);
         for x in 0..w {
@@ -268,7 +268,7 @@ fn draw(cfg: &Config, w: usize, h: usize, n: &Now, hours: &[Hour]) -> Canvas {
     let sx = (40.0 * k) as usize;
     let sy = ((h as f64 - rows as f64 * cell.1 as f64) / 2.0 + 14.0 * k).max(0.0) as usize;
     let view = starmap::View::new(starmap::Projection::Horizon { lst_deg: lst, lat_deg: cfg.lat });
-    let opts = starmap::Opts { mag: 6.0, ..starmap::Opts::default() };
+    let opts = starmap::Opts { mag: 6.0, tint: 2.0, ..starmap::Opts::default() };
     let drawn: Vec<starmap::Body> = bodies
         .iter()
         .map(|&(name, ra, dec)| starmap::Body {

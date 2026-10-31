@@ -35,7 +35,7 @@ impl Opts {
     /// the Messier and Caldwell objects on.
     pub fn for_bortle(bortle: f64) -> Self {
         Self {
-            inner: starmap::Opts { dso: true, ..starmap::Opts::for_bortle(bortle) },
+            inner: starmap::Opts { dso: true, tint: 2.0, ..starmap::Opts::for_bortle(bortle) },
             zoom: 1.0,
             centre: None,
             pan: (0.0, 0.0),

@@ -167,13 +167,17 @@ fn running(pidfile: &PathBuf) -> Option<i32> {
 /// Whether ~/.framerc's `background` line names the wallpaper file.
 fn wall_is_on(wall: &std::path::Path) -> bool {
     let Ok(rc) = fs::read_to_string(home().join(".framerc")) else { return false };
-    rc.lines().any(|l| {
-        let l = l.split('#').next().unwrap_or("").trim();
-        let Some((k, v)) = l.split_once('=') else { return false };
-        let v = v.trim();
-        let v = v.strip_prefix("~/").map(|r| home().join(r)).unwrap_or_else(|| PathBuf::from(v));
-        k.trim() == "background" && v == wall
-    })
+    shows(&rc, wall)
+}
+
+/// Whether the last `background` line names `wall`: frame takes the last,
+/// so a view's line at the end of the file wins over the one before it.
+fn shows(rc: &str, wall: &std::path::Path) -> bool {
+    let last = rc.lines().filter_map(|l| {
+        let (k, v) = l.split('#').next()?.trim().split_once('=')?;
+        (k.trim() == "background").then(|| v.trim().to_string())
+    });
+    last.last().is_some_and(|v| v.strip_prefix("~/").map(|r| home().join(r)).unwrap_or_else(|| PathBuf::from(&v)) == wall)
 }
 
 /// Write the picture as frame wants it, whole or not at all.
@@ -731,6 +735,15 @@ mod tests {
         // 2026-10-31 local, UTC+1.
         let epoch = crate::date_util::date_to_ts(2026, 10, 31, 0, 0, 0) - 3600 + (h * 3600.0) as i64;
         Now { y: 2026, m: 10, d: 31, hour: h, tz: 1.0, epoch, wday: 6 }
+    }
+
+    #[test]
+    fn the_last_background_line_counts_as_in_frame() {
+        let wall = std::path::Path::new("/h/.astro/wall.bgrx");
+        assert!(shows("background = /h/.astro/wall.bgrx  # astro\n", wall));
+        assert!(!shows("background = /h/.astro/wall.bgrx\n# view matrix: begin\nbackground = /h/m.bgrx\n", wall));
+        assert!(shows("background = /h/.framebg\nbackground = /h/.astro/wall.bgrx\n", wall));
+        assert!(!shows("# background = /h/.astro/wall.bgrx\n", wall));
     }
 
     #[test]

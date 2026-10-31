@@ -105,7 +105,7 @@ fn sky_at(at: Moment, lat: f64, lon: f64, tz: f64) -> (f64, Vec<Body>) {
     (lst, drawn)
 }
 
-fn body_rgb(name: &str) -> (u8, u8, u8) {
+pub(crate) fn body_rgb(name: &str) -> (u8, u8, u8) {
     match name {
         "sun" => (255, 225, 120),
         "moon" => (235, 235, 225),

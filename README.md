@@ -302,6 +302,29 @@ Each forecast hour gets "negative points" based on your limits:
 
 **0–1 = GOOD (green), 2–3 = FAIR (yellow), 4+ = BAD (red).**
 
+## The living wallpaper
+
+![The living wallpaper](img/screenshot-wall.png)
+
+`astro --wall` draws your desktop's background: the sky over you now, the
+Moon in its phase, and the Yr forecast for the next day and the five after.
+It is made for [frame](https://github.com/isene/frame), which shows a raw
+picture as its background.
+
+- Point frame at the picture with `background = ~/.astro/wall.bgrx` in
+  `~/.framerc`, then run `astro --wall`. [fx](https://github.com/isene/fx)
+  does both with one tick box.
+- It draws a new picture on every full hour, tells frame to show it, and
+  sleeps in between. A laptop that slept past the hour gets a new picture
+  as it wakes.
+- It stops when `~/.framerc` names another background, so it costs nothing
+  once turned off. Started again, it draws at once.
+- `astro --wall --png file.png` draws one picture to look at.
+
+The place and the sky come from `~/.astro/config.yml`, the weather from the
+same cache the app uses. Words are drawn in DejaVu Sans (or Noto or
+Liberation Sans) when one is installed.
+
 ## Configuration
 
 `~/.astro/config.yml` (auto-created on first run; first launch also prompts for location):
@@ -354,6 +377,7 @@ The standalone [nova](https://github.com/isene/nova) and [scope](https://github.
 - **Events**: [in-the-sky.org](https://in-the-sky.org/rss.php) RSS feed
 - **Sky chart**: [starmap](https://github.com/isene/starmap), which carries the Yale Bright Star Catalogue, Hipparcos distances, the IAU star names and d3-celestial's constellation figures
 - **APOD**: [apod.nasa.gov](https://apod.nasa.gov/)
+- **Moon map** (the wallpaper): NASA/GSFC/Arizona State University, Lunar Reconnaissance Orbiter (LROC WAC), as in [moon](https://github.com/isene/moon)
 - **Ephemeris**: [orbit](https://github.com/isene/orbit), IAU 2006 obliquity standard, ported from [ruby-ephemeris](https://github.com/isene/ephemeris)
 
 ## Part of the Rust Terminal Suite (Fe₂O₃)

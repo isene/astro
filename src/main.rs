@@ -7,6 +7,7 @@ mod images;
 mod photo;
 mod plan;
 mod sky;
+mod wall;
 mod weather;
 
 use crust::{Crust, Cursor, Input, Pane};
@@ -24,7 +25,9 @@ fn main() {
     if std::env::args().skip(1).any(|a| a == "-h" || a == "--help") {
         println!("astro — Amateur-astronomy companion (Fe2O3 suite)");
         println!();
-        println!("Usage: astro");
+        println!("Usage: astro                  the app");
+        println!("       astro --wall           the living wallpaper for frame: sky, moon, weather, hourly");
+        println!("       astro --wall --png F   one wallpaper picture, to file F");
         println!();
         println!("Sky mode: weather, ephemeris, observing conditions, sky chart, APOD.");
         println!("Gear mode: telescopes, eyepieces, combinations, observation logs.");
@@ -32,6 +35,12 @@ fn main() {
     }
     if std::env::args().skip(1).any(|a| a == "-v" || a == "--version") {
         println!("astro {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--wall") {
+        wall::run(&args);
         return;
     }
 

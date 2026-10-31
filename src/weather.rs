@@ -213,7 +213,12 @@ pub fn fetch_weather(lat: f64, lon: f64) -> Vec<DayForecast> {
             Some(d) => d,
             None => continue,
         };
-        let next_1h = ts.pointer("/data/next_1_hours");
+        // Hourly for the first two days or so; after that each point
+        // carries the next six hours (and the last ones twelve).
+        let next_1h = ts
+            .pointer("/data/next_1_hours")
+            .or_else(|| ts.pointer("/data/next_6_hours"))
+            .or_else(|| ts.pointer("/data/next_12_hours"));
 
         let date = time[..10].to_string();
         let hour: i64 = time[11..13].parse().unwrap_or(-1);

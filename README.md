@@ -44,6 +44,16 @@ astro
 
 First launch prompts for location and migrates `~/.nova/config.yml` and `~/.scope/data.json` if they exist, so users coming from the predecessors carry their settings forward.
 
+The living wallpaper (`astro --wall`) can follow you from place to place. List your Wi-Fi networks in `~/.astro/config.yml`; each hour it reads the network it is on (`iw`, Linux), and a match becomes the location for the sky, the moon and the weather. On a network not in the list it keeps the last place.
+
+```yaml
+wifi:
+  HomeNet: Oslo 59.91 10.75
+  "#HotelGuest": Tromsø 69.65 18.96
+```
+
+Quote a name that starts with `#`, since YAML reads the rest of that line as a comment.
+
 Press `?` inside either mode for the full keybinding reference.
 
 ## Sky mode

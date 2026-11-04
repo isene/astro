@@ -70,7 +70,8 @@ pub fn run(args: &[String]) {
         libc::sigaction(libc::SIGUSR1, &sa, std::ptr::null_mut());
     }
     loop {
-        let (cfg, n) = (Config::load(), Now::get());
+        let (mut cfg, n) = (Config::load(), Now::get());
+        cfg.follow_wifi();
         let c = draw(&cfg, w, h, &n, &forecast(&cfg, &n));
         if save(&c, &wall).is_ok() {
             nudge_frame();

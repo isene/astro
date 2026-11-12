@@ -31,7 +31,7 @@ pub fn run(env: super::SkyEnv) -> bool {
     let mut quit_astro = false;
 
     loop {
-        let Some(key) = Input::getchr(Some(5)) else { continue };
+        let Some(key) = Input::getchr(None) else { continue };
         // Any key puts the key legend back, unless the key itself
         // leaves a message there.
         app.status = None;

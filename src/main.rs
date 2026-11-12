@@ -62,7 +62,10 @@ fn main() {
     app.render_all();
 
     loop {
-        let Some(key) = Input::getchr(Some(1)) else {
+        // A timer only while a fetch is on its way; else nothing wakes
+        // astro but a key.
+        let wait = (app.event_rx.is_some() || app.image_rx.is_some()).then_some(1);
+        let Some(key) = Input::getchr(wait) else {
             // Idle tick: poll any in-flight async fetches.
             if app.poll_async() {
                 app.render_all();
@@ -73,7 +76,9 @@ fn main() {
             app.tick();
             continue;
         };
-        // Also poll before handling the key (pick up any newly-ready data).
+        // Also poll before handling the key (pick up any newly-ready data),
+        // and see whether midnight has passed.
+        app.tick();
         if app.poll_async() {
             app.render_all();
             if app.current_image.is_some() {

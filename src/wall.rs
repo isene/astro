@@ -264,30 +264,41 @@ fn save(parts: &[Canvas], wall: &std::path::Path) -> std::io::Result<()> {
 
 /// Ask this display's frame to load the new picture (SIGUSR2). An old
 /// frame without the handler would die of it, so only one that catches
-/// SIGUSR2 (bit 11 of SigCgt) gets it.
+/// SIGUSR2 (bit 11 of SigCgt) gets it. A drawer started with a DISPLAY
+/// no frame runs on (":0" from a udev script, say) asks every frame:
+/// its signal reached nobody, and the screen kept a picture cut for the
+/// monitor just unplugged.
 fn nudge_frame() {
-    let Some(display) = std::env::var("DISPLAY").ok() else { return };
-    let Some(num) = display.rsplit(':').next().and_then(|n| n.split('.').next()).map(str::to_string) else { return };
+    let num = std::env::var("DISPLAY").ok()
+        .and_then(|d| d.rsplit(':').next().and_then(|n| n.split('.').next()).map(str::to_string))
+        .unwrap_or_default();
     let Ok(dir) = fs::read_dir("/proc") else { return };
+    let mut frames: Vec<(i32, bool)> = Vec::new();
     for e in dir.flatten() {
         let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else { continue };
         if fs::read_to_string(e.path().join("comm")).map(|c| c.trim() != "frame").unwrap_or(true) {
             continue;
         }
         let Ok(cmd) = fs::read(e.path().join("cmdline")) else { continue };
-        if cmd.split(|&b| b == 0).nth(1) != Some(num.as_bytes()) {
-            continue;
-        }
         let caught = fs::read_to_string(e.path().join("status"))
             .ok()
             .and_then(|s| s.lines().find_map(|l| l.strip_prefix("SigCgt:").map(|v| u64::from_str_radix(v.trim(), 16))))
             .and_then(Result::ok)
             .unwrap_or(0);
         if caught & (1 << 11) != 0 {
-            unsafe { libc::kill(pid, libc::SIGUSR2) };
+            frames.push((pid, cmd.split(|&b| b == 0).nth(1) == Some(num.as_bytes())));
         }
-        return;
     }
+    for pid in to_nudge(&frames) {
+        unsafe { libc::kill(pid, libc::SIGUSR2) };
+    }
+}
+
+/// Which frames get the signal: the one on our display, or all of them
+/// when none is.
+fn to_nudge(frames: &[(i32, bool)]) -> Vec<i32> {
+    let ours = frames.iter().any(|f| f.1);
+    frames.iter().filter(|f| f.1 || !ours).map(|f| f.0).collect()
 }
 
 /// Sleep until the next full hour on the wall clock. The clock is the
@@ -803,6 +814,13 @@ mod tests {
         // 2026-10-31 local, UTC+1.
         let epoch = crate::date_util::date_to_ts(2026, 10, 31, 0, 0, 0) - 3600 + (h * 3600.0) as i64;
         Now { y: 2026, m: 10, d: 31, hour: h, tz: 1.0, epoch, wday: 6 }
+    }
+
+    #[test]
+    fn a_drawer_on_a_display_without_a_frame_asks_every_frame() {
+        assert_eq!(to_nudge(&[(10, false), (20, true)]), vec![20]);
+        assert_eq!(to_nudge(&[(10, false), (20, false)]), vec![10, 20]);
+        assert!(to_nudge(&[]).is_empty());
     }
 
     #[test]

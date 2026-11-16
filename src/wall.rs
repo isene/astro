@@ -97,7 +97,9 @@ extern "C" fn wake(_: libc::c_int) {}
 /// read per kernel device message and nothing between them.
 #[cfg(target_os = "linux")]
 fn watch_screens() {
-    let main = unsafe { libc::pthread_self() };
+    // As a number: a thread id is a pointer on musl, and a pointer may
+    // not move into another thread.
+    let main = unsafe { libc::pthread_self() } as usize;
     std::thread::spawn(move || unsafe {
         let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, libc::NETLINK_KOBJECT_UEVENT);
         let mut addr: libc::sockaddr_nl = std::mem::zeroed();
@@ -117,7 +119,7 @@ fn watch_screens() {
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
             while libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), libc::MSG_DONTWAIT) > 0 {}
-            libc::pthread_kill(main, libc::SIGUSR1);
+            libc::pthread_kill(main as libc::pthread_t, libc::SIGUSR1);
         }
     });
 }

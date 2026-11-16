@@ -76,11 +76,17 @@ pub fn run(args: &[String]) {
         // The screens are read for each picture: a monitor plugged in or
         // out changes the size frame wants, and SIGUSR1 draws it anew.
         let hours = forecast(&cfg, &n);
-        let parts: Vec<Canvas> = screens().iter().map(|&(w, h)| draw(&cfg, w, h, &n, &hours)).collect();
+        let layout = screens();
+        let parts: Vec<Canvas> = layout.iter().map(|&(w, h)| draw(&cfg, w, h, &n, &hours)).collect();
         if save(&parts, &wall).is_ok() {
             nudge_frame();
         }
         drop(parts);
+        // A monitor that came or went while this picture was drawn: its
+        // signal found nobody asleep and is lost, so look once more.
+        if screens() != layout {
+            continue;
+        }
         sleep_to_next_hour();
         if !wall_is_on(&wall) {
             break;

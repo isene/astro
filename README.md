@@ -327,6 +327,8 @@ picture as its background.
 - It draws a new picture on every full hour, tells frame to show it, and
   sleeps in between. A laptop that slept past the hour gets a new picture
   as it wakes.
+- With two screens it draws one picture for each, side by side, and a
+  monitor plugged in or out gets its picture within seconds.
 - It stops when `~/.framerc` names another background, so it costs nothing
   once turned off. Started again, it draws at once.
 - `astro --wall --png file.png` draws one picture to look at.

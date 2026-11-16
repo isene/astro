@@ -37,7 +37,7 @@ const MONTHS: [&str; 12] = [
 ];
 
 pub fn run(args: &[String]) {
-    let (w, h) = panel_size();
+    let (w, h) = screens()[0];
     if let Some(i) = args.iter().position(|a| a == "--png") {
         let Some(out) = args.get(i + 1) else {
             eprintln!("astro: --png needs a file name");
@@ -69,14 +69,18 @@ pub fn run(args: &[String]) {
         sa.sa_sigaction = wake as extern "C" fn(libc::c_int) as usize;
         libc::sigaction(libc::SIGUSR1, &sa, std::ptr::null_mut());
     }
+    watch_screens();
     loop {
         let (mut cfg, n) = (Config::load(), Now::get());
         cfg.follow_wifi();
-        let c = draw(&cfg, w, h, &n, &forecast(&cfg, &n));
-        if save(&c, &wall).is_ok() {
+        // The screens are read for each picture: a monitor plugged in or
+        // out changes the size frame wants, and SIGUSR1 draws it anew.
+        let hours = forecast(&cfg, &n);
+        let parts: Vec<Canvas> = screens().iter().map(|&(w, h)| draw(&cfg, w, h, &n, &hours)).collect();
+        if save(&parts, &wall).is_ok() {
             nudge_frame();
         }
-        drop(c);
+        drop(parts);
         sleep_to_next_hour();
         if !wall_is_on(&wall) {
             break;
@@ -86,6 +90,46 @@ pub fn run(args: &[String]) {
 }
 
 extern "C" fn wake(_: libc::c_int) {}
+
+/// Draw anew when a monitor is plugged in or out. A thread waits in the
+/// kernel for its device messages; one about a screen ends the hour's
+/// sleep a second later, when the screens have settled. It costs one
+/// read per kernel device message and nothing between them.
+#[cfg(target_os = "linux")]
+fn watch_screens() {
+    let main = unsafe { libc::pthread_self() };
+    std::thread::spawn(move || unsafe {
+        let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, libc::NETLINK_KOBJECT_UEVENT);
+        let mut addr: libc::sockaddr_nl = std::mem::zeroed();
+        addr.nl_family = libc::AF_NETLINK as u16;
+        addr.nl_groups = 1;
+        if fd < 0 || libc::bind(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of_val(&addr) as u32) != 0 {
+            return;
+        }
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), 0);
+            if n <= 0 {
+                return;
+            }
+            if !about_a_screen(&buf[..n as usize]) {
+                continue;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            while libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), libc::MSG_DONTWAIT) > 0 {}
+            libc::pthread_kill(main, libc::SIGUSR1);
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn watch_screens() {}
+
+/// Whether a kernel device message tells of a monitor plugged in or out.
+fn about_a_screen(msg: &[u8]) -> bool {
+    let has = |key: &[u8]| msg.split(|&b| b == 0).any(|part| part == key);
+    has(b"SUBSYSTEM=drm") && has(b"HOTPLUG=1")
+}
 
 // ── Time and place ─────────────────────────────────────────────────────
 
@@ -124,21 +168,45 @@ impl Now {
     }
 }
 
-/// The panel's size: the first connected screen's own mode, as
-/// chasm-bg finds it, else a common laptop panel.
-fn panel_size() -> (usize, usize) {
-    let found = fs::read_dir("/sys/class/drm").ok().and_then(|dir| {
-        dir.flatten().find_map(|e| {
+/// The connected screens, each with its own mode: the laptop panel
+/// first, the others after it by name, as `monitor-hotplug` lays them out
+/// from left to right. With none found, a common laptop panel.
+fn screens() -> Vec<(usize, usize)> {
+    let mut found: Vec<(String, (usize, usize))> = fs::read_dir("/sys/class/drm").into_iter().flatten().flatten()
+        .filter_map(|e| {
             let p = e.path();
             if fs::read_to_string(p.join("status")).ok()?.trim() != "connected" {
                 return None;
             }
             let modes = fs::read_to_string(p.join("modes")).ok()?;
             let (w, h) = modes.lines().next()?.split_once('x')?;
-            Some((w.parse().ok()?, h.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()?))
+            let size = (w.parse().ok()?, h.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()?);
+            Some((e.file_name().to_string_lossy().into_owned(), size))
         })
-    });
-    found.unwrap_or((1920, 1080))
+        .collect();
+    found.sort_by_key(|(name, _)| (!name.contains("eDP"), name.clone()));
+    if found.is_empty() {
+        return vec![(1920, 1080)];
+    }
+    found.into_iter().map(|(_, size)| size).collect()
+}
+
+/// The pictures side by side as one BGRX buffer, as wide as all of them
+/// and as tall as the tallest; what no screen shows stays black.
+fn side_by_side(parts: &[Canvas]) -> Vec<u8> {
+    let (w, h) = (parts.iter().map(|c| c.w).sum::<usize>(), parts.iter().map(|c| c.h).max().unwrap_or(0));
+    let mut out = vec![0u8; w * h * 4];
+    let mut x0 = 0;
+    for c in parts {
+        for (y, row) in c.rgba.chunks_exact(c.w * 4).enumerate() {
+            let at = (y * w + x0) * 4;
+            for (o, px) in out[at..at + c.w * 4].chunks_exact_mut(4).zip(row.chunks_exact(4)) {
+                o.copy_from_slice(&[px[2], px[1], px[0], 255]);
+            }
+        }
+        x0 += c.w;
+    }
+    out
 }
 
 fn home() -> PathBuf {
@@ -182,11 +250,8 @@ fn shows(rc: &str, wall: &std::path::Path) -> bool {
 }
 
 /// Write the picture as frame wants it, whole or not at all.
-fn save(c: &Canvas, wall: &std::path::Path) -> std::io::Result<()> {
-    let mut out = Vec::with_capacity(c.w * c.h * 4);
-    for px in c.rgba.chunks_exact(4) {
-        out.extend_from_slice(&[px[2], px[1], px[0], 255]);
-    }
+fn save(parts: &[Canvas], wall: &std::path::Path) -> std::io::Result<()> {
+    let out = side_by_side(parts);
     if let Some(dir) = wall.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -736,6 +801,25 @@ mod tests {
         // 2026-10-31 local, UTC+1.
         let epoch = crate::date_util::date_to_ts(2026, 10, 31, 0, 0, 0) - 3600 + (h * 3600.0) as i64;
         Now { y: 2026, m: 10, d: 31, hour: h, tz: 1.0, epoch, wday: 6 }
+    }
+
+    #[test]
+    fn only_a_monitor_message_wakes_the_drawer() {
+        assert!(about_a_screen(b"change@/devices/card1\0ACTION=change\0SUBSYSTEM=drm\0HOTPLUG=1\0"));
+        assert!(!about_a_screen(b"change@/devices/BAT0\0ACTION=change\0SUBSYSTEM=power_supply\0"));
+        assert!(!about_a_screen(b"change@/devices/card1\0SUBSYSTEM=drm\0"));
+    }
+
+    #[test]
+    fn two_screens_make_one_picture_as_wide_as_both() {
+        let mut a = Canvas::with_cell(2, 1, (1, 1));
+        let mut b = Canvas::with_cell(1, 2, (1, 1));
+        a.rgba.copy_from_slice(&[1, 2, 3, 0, 4, 5, 6, 0]);
+        b.rgba.copy_from_slice(&[7, 8, 9, 0, 10, 11, 12, 0]);
+        let out = side_by_side(&[a, b]);
+        assert_eq!(out.len(), 3 * 2 * 4);
+        assert_eq!(&out[..12], &[3, 2, 1, 255, 6, 5, 4, 255, 9, 8, 7, 255]);
+        assert_eq!(&out[12..], &[0, 0, 0, 0, 0, 0, 0, 0, 12, 11, 10, 255]);
     }
 
     #[test]

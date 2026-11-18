@@ -606,7 +606,7 @@ impl App {
             self.footer.say(&style::fg(msg, color));
         } else {
             let hint = " t:+TS  e:+EP  m:+Misc  ENTER:Edit  TAB:Focus  SPACE:Tag  f/F:Set  o:Sort  C-o:Log  x/X:Export  D:Del  ?:Help  q:Quit";
-            self.footer.say(&style::fg(hint, 245));
+            self.footer.say(&crust::with_version(&style::fg(hint, 245), self.footer.w as usize, "astro", VERSION));
         }
     }
 

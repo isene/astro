@@ -740,7 +740,7 @@ impl App {
 
     fn render_footer(&mut self) {
         let cmds = "?=Help g=Gear T=Tonight-gear l=Loc a=Lat o=Lon c=Cloud h=Hum t=Temp w=Wind b=Bortle e=Events s=Sky A=APOD r=Redraw R=Refetch W=Write q=Quit";
-        self.footer.say(cmds);
+        self.footer.say(&crust::with_version(cmds, self.footer.w as usize, "astro", env!("CARGO_PKG_VERSION")));
     }
 
     fn footer_say(&mut self, msg: &str, color: u8) {
